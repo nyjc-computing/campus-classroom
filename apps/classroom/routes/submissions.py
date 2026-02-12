@@ -1,0 +1,358 @@
+"""campus.apps.classroom.routes.submissions
+
+API routes for Submission resources.
+
+All data is stored via Campus API - no local database.
+"""
+
+import flask
+
+import campus.model
+
+
+def register_routes(app: flask.Flask, login_manager):
+    """Register submission routes with the Flask app.
+
+    Args:
+        app: The Flask application
+        login_manager: The OAuthLoginManager for authentication
+    """
+
+    @app.get("/api/v1/submissions")
+    @login_manager.login_required
+    def list_submissions(user_id: str, campus, **_):
+        """List submissions, optionally filtered.
+
+        Query parameters:
+            - assignment_id: Filter by assignment
+            - student_id: Filter by student
+            - course_id: Filter by Google Classroom course
+
+        Returns:
+            JSON array of submissions
+        """
+        assignment_id = flask.request.args.get("assignment_id")
+        student_id = flask.request.args.get("student_id")
+        course_id = flask.request.args.get("course_id")
+
+        with campus.with_user_session(user_id) as client:
+            submissions = client.api.v1.submissions.list(
+                assignment_id=assignment_id,
+                student_id=student_id,
+                course_id=course_id,
+            )
+
+        return flask.jsonify([s.to_resource() for s in submissions])
+
+    @app.post("/api/v1/submissions")
+    @login_manager.login_required
+    def api_create_submission(user_id: str, campus, **_):
+        """Create a new submission.
+
+        Request body:
+            - assignment_id: Assignment ID (required)
+            - course_id: Google Classroom course ID (required)
+            - responses: Array of response objects (optional)
+
+        Returns:
+            Created submission as JSON
+        """
+        data = flask.request.get_json()
+
+        if not data:
+            return flask.jsonify({"error": "Request body required"}), 400
+
+        if "assignment_id" not in data:
+            return flask.jsonify({"error": "assignment_id is required"}), 400
+
+        if "course_id" not in data:
+            return flask.jsonify({"error": "course_id is required"}), 400
+
+        with campus.with_user_session(user_id) as client:
+            submission = client.api.v1.submissions.new(
+                assignment_id=data["assignment_id"],
+                student_id=user_id,
+                course_id=data["course_id"],
+                responses=data.get("responses"),
+            )
+
+        return flask.jsonify(submission.to_resource()), 201
+
+    @app.get("/api/v1/submissions/<submission_id>")
+    @login_manager.login_required
+    def api_get_submission(submission_id: str, user_id: str, campus, **_):
+        """Get a submission by ID.
+
+        Returns:
+            Submission as JSON, or 404 if not found
+        """
+        with campus.with_user_session(user_id) as client:
+            try:
+                submission = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+        # Check access: only the student or a teacher can view
+        # For MVP, we allow any authenticated user to view
+        # In production, add proper authorization checks
+
+        return flask.jsonify(submission.to_resource())
+
+    @app.get("/api/v1/submissions/by-assignment/<assignment_id>")
+    @login_manager.login_required
+    def api_list_submissions_by_assignment(assignment_id: str, user_id: str, campus, **_):
+        """List all submissions for an assignment.
+
+        Returns:
+            JSON array of submissions
+        """
+        with campus.with_user_session(user_id) as client:
+            submissions = client.api.v1.submissions.by_assignment(assignment_id)
+
+        return flask.jsonify([s.to_resource() for s in submissions])
+
+    @app.get("/api/v1/submissions/by-student/<student_id>")
+    @login_manager.login_required
+    def api_list_submissions_by_student(student_id: str, user_id: str, campus, **_):
+        """List all submissions by a student.
+
+        Query parameters:
+            - course_id: Optional filter by course
+
+        Returns:
+            JSON array of submissions
+        """
+        course_id = flask.request.args.get("course_id")
+
+        with campus.with_user_session(user_id) as client:
+            if course_id:
+                # Get submissions for this student, filtered by course
+                all_submissions = client.api.v1.submissions.by_student(student_id)
+                submissions = [s for s in all_submissions if s.course_id == course_id]
+            else:
+                submissions = client.api.v1.submissions.by_student(student_id)
+
+        return flask.jsonify([s.to_resource() for s in submissions])
+
+    @app.get("/api/v1/submissions/for-student")
+    @login_manager.login_required
+    def api_get_student_submission(user_id: str, campus, **_):
+        """Get the current student's submission for an assignment.
+
+        Query parameters:
+            - assignment_id: Assignment ID (required)
+
+        Returns:
+            Submission as JSON, or 404 if not found
+        """
+        assignment_id = flask.request.args.get("assignment_id")
+        if not assignment_id:
+            return flask.jsonify({"error": "assignment_id is required"}), 400
+
+        with campus.with_user_session(user_id) as client:
+            submissions = client.api.v1.submissions.list(
+                assignment_id=assignment_id,
+                student_id=user_id,
+            )
+            if not submissions:
+                return flask.jsonify({"error": "Submission not found"}), 404
+
+        return flask.jsonify(submissions[0].to_resource())
+
+    @app.patch("/api/v1/submissions/<submission_id>")
+    @login_manager.login_required
+    def api_update_submission(submission_id: str, user_id: str, campus, **_):
+        """Update a submission.
+
+        Request body: Fields to update (responses, feedback, etc.)
+
+        Returns:
+            Updated submission as JSON, or 404 if not found
+        """
+        data = flask.request.get_json()
+        if not data:
+            return flask.jsonify({"error": "No update data provided"}), 400
+
+        with campus.with_user_session(user_id) as client:
+            # Check ownership (students can update their own submissions)
+            try:
+                current = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            if str(current.student_id) != user_id:
+                return flask.jsonify({"error": "Forbidden"}), 403
+
+            # Build update payload
+            updates = {}
+            if "responses" in data:
+                updates["responses"] = data["responses"]
+            if "feedback" in data:
+                updates["feedback"] = data["feedback"]
+            if "submitted_at" in data:
+                updates["submitted_at"] = data["submitted_at"]
+
+            client.api.v1.submissions[submission_id].update(**updates)
+            updated = client.api.v1.submissions[submission_id].get()
+
+        return flask.jsonify(updated.to_resource())
+
+    @app.delete("/api/v1/submissions/<submission_id>")
+    @login_manager.login_required
+    def api_delete_submission(submission_id: str, user_id: str, campus, **_):
+        """Delete a submission.
+
+        Returns:
+            204 on success, 404 if not found
+        """
+        with campus.with_user_session(user_id) as client:
+            # Check ownership
+            try:
+                current = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            if str(current.student_id) != user_id:
+                return flask.jsonify({"error": "Forbidden"}), 403
+
+            client.api.v1.submissions[submission_id].delete()
+
+        return "", 204
+
+    @app.post("/api/v1/submissions/<submission_id>/responses")
+    @login_manager.login_required
+    def api_submit_response(submission_id: str, user_id: str, campus, **_):
+        """Add or update a response for a question.
+
+        Request body:
+            - question_id: Question ID (required)
+            - response_text: Response text (required)
+
+        Returns:
+            Updated submission as JSON
+        """
+        data = flask.request.get_json()
+        if not data:
+            return flask.jsonify({"error": "Request body required"}), 400
+
+        if "question_id" not in data:
+            return flask.jsonify({"error": "question_id is required"}), 400
+
+        if "response_text" not in data:
+            return flask.jsonify({"error": "response_text is required"}), 400
+
+        with campus.with_user_session(user_id) as client:
+            # Check ownership
+            try:
+                current = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            if str(current.student_id) != user_id:
+                return flask.jsonify({"error": "Forbidden"}), 403
+
+            client.api.v1.submissions[submission_id].responses.add(
+                question_id=data["question_id"],
+                response_text=data["response_text"],
+            )
+            updated = client.api.v1.submissions[submission_id].get()
+
+        return flask.jsonify(updated.to_resource())
+
+    @app.post("/api/v1/submissions/<submission_id>/feedback")
+    @login_manager.login_required
+    def api_add_feedback(submission_id: str, user_id: str, campus, **_):
+        """Add teacher feedback for a question response.
+
+        Replaces any existing feedback for this question.
+
+        Request body:
+            - question_id: Question ID (required)
+            - feedback_text: Feedback text (required)
+
+        Returns:
+            Updated submission as JSON
+        """
+        data = flask.request.get_json()
+        if not data:
+            return flask.jsonify({"error": "Request body required"}), 400
+
+        if "question_id" not in data:
+            return flask.jsonify({"error": "question_id is required"}), 400
+
+        if "feedback_text" not in data:
+            return flask.jsonify({"error": "feedback_text is required"}), 400
+
+        with campus.with_user_session(user_id) as client:
+            # For MVP, any authenticated user can add feedback
+            # In production, verify the user is a teacher for this course
+
+            client.api.v1.submissions[submission_id].feedback.add(
+                question_id=data["question_id"],
+                feedback_text=data["feedback_text"],
+            )
+            updated = client.api.v1.submissions[submission_id].get()
+
+        return flask.jsonify(updated.to_resource())
+
+    @app.post("/api/v1/submissions/<submission_id>/submit")
+    @login_manager.login_required
+    def api_finalize_submission(submission_id: str, user_id: str, campus, **_):
+        """Mark submission as submitted (sets submitted_at).
+
+        Returns:
+            Updated submission as JSON
+        """
+        with campus.with_user_session(user_id) as client:
+            # Check ownership
+            try:
+                current = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            if str(current.student_id) != user_id:
+                return flask.jsonify({"error": "Forbidden"}), 403
+
+            client.api.v1.submissions[submission_id].submit()
+            updated = client.api.v1.submissions[submission_id].get()
+
+        return flask.jsonify(updated.to_resource())
+
+    @app.post("/api/v1/submissions/<submission_id>/unsubmit")
+    @login_manager.login_required
+    def api_unsubmit_submission(submission_id: str, user_id: str, campus, **_):
+        """Unsubmit a submission (allows student to edit again).
+
+        Returns:
+            Updated submission as JSON
+        """
+        with campus.with_user_session(user_id) as client:
+            # Check ownership
+            try:
+                current = client.api.v1.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            if str(current.student_id) != user_id:
+                return flask.jsonify({"error": "Forbidden"}), 403
+
+            # To unsubmit, we clear the submitted_at timestamp
+            client.api.v1.submissions[submission_id].update(submitted_at=None)
+            updated = client.api.v1.submissions[submission_id].get()
+
+        return flask.jsonify(updated.to_resource())
+
+
+__all__ = ["register_routes"]

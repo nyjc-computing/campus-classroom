@@ -9,6 +9,8 @@ import campus_python
 import flask
 from campus import flask_campus
 
+from . import routes
+
 
 def create_app():
     """Application factory for Campus Classroom."""
@@ -25,7 +27,7 @@ def create_app():
         raise ValueError("SECRET_KEY environment variable is required")
 
     # Add jinja timestamp filter
-    def timestamp(dt, format="%Y-%m-%d %H:%M"):
+    def timestamp(dt, format="%%Y-%%m-%%d %%H:%%M"):
         if dt is None:
             return "N/A"
         if isinstance(dt, str):
@@ -51,7 +53,11 @@ def create_app():
     app.campus = campus
     app.login_manager = login_manager
 
-    # Register routes
+    # Register API routes
+    routes.assignments.register_routes(app, login_manager)
+    routes.submissions.register_routes(app, login_manager)
+
+    # Register UI routes
     @app.get("/")
     def index():
         return flask.render_template("index.html")
@@ -64,5 +70,31 @@ def create_app():
     @login_manager.login_required
     def dashboard(**_):
         return flask.render_template("dashboard.html")
+
+    # Assignment UI routes
+    @app.get("/assignments")
+    @login_manager.login_required
+    def assignments_list(**_):
+        """List assignments page."""
+        return flask.render_template("assignments/list.html")
+
+    @app.get("/assignments/new")
+    @login_manager.login_required
+    def assignment_new(**_):
+        """Create new assignment page."""
+        return flask.render_template("assignments/new.html")
+
+    @app.get("/assignments/<assignment_id>")
+    @login_manager.login_required
+    def assignment_view(assignment_id: str, **_):
+        """View/edit assignment page."""
+        return flask.render_template("assignments/view.html", assignment_id=assignment_id)
+
+    # Submission UI routes
+    @app.get("/submissions/<submission_id>")
+    @login_manager.login_required
+    def submission_view(submission_id: str, **_):
+        """View submission page."""
+        return flask.render_template("submissions/view.html", submission_id=submission_id)
 
     return app

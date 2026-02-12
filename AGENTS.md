@@ -284,6 +284,78 @@ def register_routes(app):
 
 ## campus-classroom Specific Considerations
 
+### Storage Architecture
+
+**IMPORTANT:** `campus-classroom` does **NOT** have its own database. All data storage is handled by Campus API via the `campus-python` client.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                   campus-classroom Flask App                    │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Routes (apps/classroom/routes/)                    │    │
+│  │  - assignments.py  (uses campus.api.v1.assignments) │    │
+│  │  - submissions.py  (uses campus.api.v1.submissions) │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                           │                                   │
+│                           ▼                                   │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  campus-python Client (campus_python.Campus)          │    │
+│  │  - with_user_session() for user-scoped operations      │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                           │                                   │
+│                           ▼                                   │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Campus API (campus/api/resources/)                   │    │
+│  │  - assignments.py (AssignmentsResource)                │    │
+│  │  - submissions.py (SubmissionsResource)                │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                           │                                   │
+│                           ▼                                   │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Storage Layer (campus/storage/)                      │    │
+│  │  - MongoDB collections (assignments, submissions)        │    │
+│  └────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**What this means for implementation:**
+- **DO NOT** create local database tables, migrations, or storage code
+- **DO** use `campus.with_user_session(user_id) as client:` context for all data operations
+- **DO** access resources via `client.api.v1.assignments` and `client.api.v1.submissions`
+- **Models** are imported from `campus.model` (Assignment, Submission, Question, Response, Feedback, ClassroomLink)
+
+**Models are defined in:** `d:\nyjc-computing\campus\campus\model\`
+- `assignment.py` - Assignment, Question, ClassroomLink
+- `submission.py` - Submission, Response, Feedback
+
+**API Resources are defined in:** `d:\nyjc-computing\campus\campus\api\resources\`
+- `assignment.py` - AssignmentsResource, AssignmentResource
+- `submission.py` - SubmissionsResource, SubmissionResource
+
+**Client is defined in:** `d:\nyjc-computing\campus-api-python\campus_python\api\v1\`
+- `assignments.py` - Assignments, Assignment, Assignment.Links
+- `submissions.py` - Submissions, Submission, Submission.Responses, Submission.Feedback
+
+### What DOESN'T need local storage
+
+| Data | Stored In | Accessed Via |
+|-------|-------------|--------------|
+| Assignments (questions, title, description) | Campus API (MongoDB) | `client.api.v1.assignments` |
+| Submissions (responses, feedback) | Campus API (MongoDB) | `client.api.v1.submissions` |
+| User authentication | Campus API (PostgreSQL) | `login_manager` (flask_campus) |
+| Session state | Flask session | `flask.session` |
+
+### What MAY need local storage (future consideration)
+
+| Feature | Storage Option | Notes |
+|----------|----------------|-------|
+| Google OAuth tokens for Classroom API | Flask session or Campus tokens | Use incremental scope approval via Campus API |
+| Pub/Sub registration state | Campus API or local | For feedback release notifications |
+| Temporary draft state | Flask session or local | For auto-save before assignment creation |
+
+### Google Classroom Add-On Requirements
+
 ### Google Classroom Add-On Requirements
 
 1. **Iframe Views** (must work within Classroom iframe):
