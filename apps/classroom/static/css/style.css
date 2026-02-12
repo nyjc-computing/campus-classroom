@@ -1,0 +1,84 @@
+/* Campus Classroom - Minimal Styles */
+
+:root {
+    --border-color: #dee2e6;
+    --text-primary: #212529;
+    --text-secondary: #6c757d;
+    --text-muted: #adb5bd;
+    --bg-hover: #f8f9fa;
+}
+
+/* Reset main padding */
+main {
+    padding: 0;
+}
+
+/* Skip to content link (accessibility) */
+.skip-to-content {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--text-primary);
+    color: white;
+    padding: 8px 16px;
+    text-decoration: none;
+    z-index: 100;
+}
+
+.skip-to-content:focus {
+    top: 0;
+}
+
+/* Navbar brand */
+.navbar-brand {
+    font-weight: 600;
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.navbar-brand:hover {
+    color: var(--text-primary);
+}
+
+/* Card hover effects */
+.card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Flash messages */
+.alert-dismissible {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* List group items */
+.list-group-item {
+    border-color: var(--border-color);
+    transition: background-color 0.15s ease;
+}
+
+.list-group-item:hover {
+    background-color: var(--bg-hover);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .display-5 {
+        font-size: 2rem;
+    }
+}
