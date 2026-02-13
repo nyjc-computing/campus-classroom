@@ -21,7 +21,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/api/v1/assignments")
     @login_manager.login_required
-    def list_assignments(user_id: str, campus, **_):
+    def list_assignments(user_id, campus, **_):
         """List assignments, optionally filtered by teacher.
 
         Query parameters:
@@ -39,7 +39,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.post("/api/v1/assignments")
     @login_manager.login_required
-    def api_create_assignment(user_id: str, campus, **_):
+    def api_create_assignment(user_id, campus, **_):
         """Create a new assignment.
 
         Request body:
@@ -68,7 +68,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/api/v1/assignments/<assignment_id>")
     @login_manager.login_required
-    def api_get_assignment(assignment_id: str, user_id: str, campus, **_):
+    def api_get_assignment(assignment_id: str, user_id, campus, **_):
         """Get an assignment by ID.
 
         Returns:
