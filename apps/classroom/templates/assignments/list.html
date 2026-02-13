@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}My Assignments{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>My Assignments</h1>
+        <a href="{{ url_for('assignment_new') }}" class="btn btn-primary">+ New Assignment</a>
+    </div>
+
+    <div id="assignments-container" class="row g-3">
+        <div class="col-12">
+            <div class="text-center py-5">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="spinner-grow" role="status">
+                    <span class="visually-hidden">Loading assignments...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load assignments on page load
+async function loadAssignments() {
+    try {
+        const response = await fetch('/api/v1/assignments?created_by={{ g.user }}');
+        if (!response.ok) throw new Error('Failed to load assignments');
+
+        const data = await response.json();
+        const container = document.getElementById('assignments-container');
+
+        if (data.length === 0) {
+            container.innerHTML = `
+                <div class="col-12">
+                    <div class="text-center py-5">
+                        <h5 class="text-muted">No assignments yet</h5>
+                        <p class="text-muted">Create your first assignment to get started.</p>
+                        <a href="{{ url_for('assignment_new') }}" class="btn btn-primary">Create Assignment</a>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = data.map(assignment => `
+            <div class="col-md-6 col-lg-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <a href="{{ url_for('assignment_view', assignment_id='${assignment.id}') }}" class="text-decoration-none text-dark">
+                                ${escapeHtml(assignment.title)}
+                            </a>
+                        </h5>
+                        ${assignment.description ? `<p class="text-muted small mb-2">${escapeHtml(assignment.description)}</p>` : ''}
+                        <div class="mb-2">
+                            <span class="badge bg-secondary">${assignment.questions.length} questions</span>
+                            ${assignment.classroom_links.length > 0 ? '<span class="badge bg-primary ms-2">Linked to Classroom</span>' : ''}
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">Created ${timestamp(assignment.created_at)}</small>
+                            <a href="{{ url_for('assignment_view', assignment_id='${assignment.id}') }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading assignments:', error);
+        container.innerHTML = `
+            <div class="col-12">
+                <div class="alert alert-danger">Failed to load assignments. Please refresh the page.</div>
+            </div>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function timestamp(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-SG', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Load on page view
+loadAssignments();
+</script>
+{% endblock %}
