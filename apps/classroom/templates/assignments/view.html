@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}{{ assignment.title }}{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4">
+    <div id="assignment-loading" class="text-center py-5">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <div id="assignment-container" class="d-none"></div>
+</div>
+
+<script>
+const assignmentId = {{ assignment_id | tojson }};
+
+async function loadAssignment() {
+    try {
+        const response = await fetch(`/api/v1/assignments/${assignmentId}`);
+        if (!response.ok) throw new Error('Failed to load assignment');
+
+        const assignment = await response.json();
+        const container = document.getElementById('assignment-container');
+
+        // Render assignment
+        container.innerHTML = `
+            <nav aria-label="breadcrumb" class="mb-4">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('assignments_list') }}">Assignments</a></li>
+                    <li class="breadcrumb-item active">${escapeHtml(assignment.title)}</li>
+                </ol>
+            </nav>
+
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <h2>${escapeHtml(assignment.title)}</h2>
+                        ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
+                    </div>
+
+                    ${assignment.classroom_links && assignment.classroom_links.length > 0 ? `
+                        <div class="alert alert-info">
+                            This assignment is locked. Unlink from Google Classroom to edit.
+                            ${assignment.classroom_links.map(link => `
+                                <div class="small">
+                                    <strong>Course:</strong> ${link.course_id}<br>
+                                    <strong>Attachment:</strong> ${link.attachment_id || 'N/A'}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+
+                    <hr>
+
+                    <h5 class="mb-3">Questions (${assignment.questions.length})</h5>
+
+                    <div class="questions-list mb-4">
+                        ${assignment.questions.map(q => renderQuestion(q)).join('')}
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        ${assignment.classroom_links && assignment.classroom_links.length === 0 ? `
+                            <button type="button" class="btn btn-primary" onclick="linkToClassroom()">Link to Classroom</button>
+                        ` : ''}
+
+                        <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-secondary">Back</a>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('assignment-loading').classList.add('d-none');
+    } catch (error) {
+        console.error('Error loading assignment:', error);
+        document.getElementById('assignment-container').innerHTML = `
+            <div class="alert alert-danger">Failed to load assignment. Please <a href="{{ url_for('assignments_list') }}">go back</a>.</div>
+        `;
+    }
+}
+
+function renderQuestion(q) {
+    const level = q.id.split('.').length;
+    const indent = (level - 1) * 24;
+
+    return `
+        <div class="question-item mb-3 p-3" style="margin-left: ${indent}px">
+            <strong>${escapeHtml(q.id)}</strong>
+            ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
+            <p>${escapeHtml(q.question)}</p>
+        </div>
+    `;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function linkToClassroom() {
+    // This will open Classroom - actual implementation via Google Classroom API
+    alert('To link this assignment to Google Classroom, you will need to create an assignment in Google Classroom and attach it as an add-on.');
+}
+
+// Load on page view
+loadAssignment();
+</script>
+
+<style>
+.question-item {
+    border-left: 2px solid var(--border-color);
+}
+
+.breadcrumb-item + .breadcrumb-item::before {
+    content: ">";
+    margin-right: 0.5rem;
+}
+</style>
+{% endblock %}

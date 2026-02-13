@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}New Assignment{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <h2 class="mb-4">Create New Assignment</h2>
+
+            <form id="assignment-form" class="needs-validation">
+                <div class="mb-3">
+                    <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="title" name="title" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="description" class="form-label">Description</label>
+                    <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6>Questions</h6>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQuestion()">+ Add Question</button>
+                    </div>
+                    <div id="questions-container"></div>
+                </div>
+
+                <div class="d-grid gap-2 mt-4">
+                    <button type="submit" class="btn btn-primary">Create Assignment</button>
+                    <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+let questionCount = 0;
+
+function addQuestion() {
+    questionCount++;
+    const container = document.getElementById('questions-container');
+    const questionId = `q${questionCount}`;
+
+    const questionHtml = `
+        <div class="card mb-3" data-question-id="${questionId}">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h6 class="mb-0">Question ${questionCount}</h6>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeQuestion('${questionId}')">&times;</button>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Prompt (optional)</label>
+                    <textarea class="form-control question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Question <span class="text-danger">*</span></label>
+                    <textarea class="form-control question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+                </div>
+            </div>
+        </div>
+    `;
+
+    container.insertAdjacentHTML('beforeend', questionHtml);
+}
+
+function removeQuestion(questionId) {
+    const card = document.querySelector(`[data-question-id="${questionId}"]`);
+    if (card) {
+        card.remove();
+    }
+}
+
+async function submitAssignment(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const title = form.title.value.trim();
+    const description = form.description.value.trim();
+
+    if (!title) {
+        alert('Title is required');
+        return;
+    }
+
+    // Collect questions
+    const questions = [];
+    document.querySelectorAll('[data-question-id]').forEach((card, index) => {
+        const prompt = card.querySelector('.question-prompt').value.trim();
+        const questionText = card.querySelector('.question-text').value.trim();
+
+        if (!questionText) {
+            alert(`Question ${index + 1} must have a question`);
+            return;
+        }
+
+        questions.push({
+            id: `q${index + 1}`,
+            prompt: prompt,
+            question: questionText
+        });
+    });
+
+    const payload = {
+        title: title,
+        description: description || null,
+        questions: questions
+    };
+
+    try {
+        const response = await fetch('/api/v1/assignments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error('Failed to create assignment');
+
+        const data = await response.json();
+
+        // Redirect to the assignment view
+        window.location.href = `{{ url_for('assignment_view', assignment_id='${data.id}') }}`;
+    } catch (error) {
+        console.error('Error creating assignment:', error);
+        alert('Failed to create assignment. Please try again.');
+    }
+}
+
+document.getElementById('assignment-form').addEventListener('submit', submitAssignment);
+</script>
+
+<style>
+.question-prompt, .question-text {
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+[data-question-id] {
+    border-left: 3px solid var(--border-color);
+}
+</style>
+{% endblock %}
