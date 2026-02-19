@@ -13,6 +13,8 @@ flask = "^3.0.0"
 # Campus internal dependencies
 campus-api-python = {git = "https://github.com/nyjc-computing/campus-api-python.git", branch = "main"}
 campus-suite = {git = "https://github.com/nyjc-computing/campus.git", branch = "weekly"}
+
+[tool.poetry.group.dev.dependencies]
 python-dotenv = "^1.2.1"
 
 [tool.pyright]
