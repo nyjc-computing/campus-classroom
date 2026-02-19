@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Campus Classroom - Iframe Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #f5f5f5;
+        }
+        .iframe-container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        iframe {
+            border: none;
+            display: block;
+        }
+        .test-panel {
+            position: sticky;
+            top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <h1 class="mb-4">Google Classroom Iframe Test</h1>
+
+        <div class="row">
+            <div class="col-md-3">
+                <div class="test-panel card">
+                    <div class="card-header">
+                        <h6 class="mb-0">Test Options</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">View Type:</label>
+                            <select class="form-select" id="viewType" onchange="updateIframe()">
+                                <option value="teacher">Teacher View</option>
+                                <option value="student">Student View</option>
+                                <option value="review">Student Work Review</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Iframe Size:</label>
+                            <select class="form-select" id="iframeSize" onchange="updateIframe()">
+                                <option value="600x400">600 x 400 (small)</option>
+                                <option value="800x600">800 x 600 (medium)</option>
+                                <option value="1000x700">1000 x 700 (large)</option>
+                                <option value="1366x768">1366 x 768 (HD)</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Test Parameters:</label>
+                            <div class="mb-2">
+                                <input type="checkbox" id="useMockParams" checked>
+                                <label for="useMockParams">Use mock params</label>
+                            </div>
+                            <div class="mb-2">
+                                <input type="text" class="form-control form-control-sm" id="customParams"
+                                       placeholder="courseId=xxx&itemId=yyy">
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn btn-primary w-100" onclick="updateIframe()">Refresh</button>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">Context Info</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="small text-muted mb-1">
+                            <strong>Base URL:</strong><br>
+                            <code id="baseUrl"></code>
+                        </p>
+                        <p class="small text-muted mb-1">
+                            <strong>Full URL:</strong><br>
+                            <code id="fullUrl"></code>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-9">
+                <div class="iframe-container p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0">Iframe Preview</h5>
+                        <span id="sizeLabel" class="badge bg-secondary">800 x 600</span>
+                    </div>
+                    <div class="d-flex justify-content-center">
+                        <iframe id="testIframe"></iframe>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const baseUrl = window.location.origin;
+
+        document.getElementById('baseUrl').textContent = baseUrl;
+
+        function updateIframe() {
+            const viewType = document.getElementById('viewType').value;
+            const size = document.getElementById('iframeSize').value.split('x');
+            const useMock = document.getElementById('useMockParams').checked;
+            const customParams = document.getElementById('customParams').value;
+
+            let url = `${baseUrl}/addon/${viewType}`;
+            let params = [];
+
+            if (useMock || customParams) {
+                if (useMock) {
+                    // Use mock params
+                    if (viewType === 'teacher' || viewType === 'student') {
+                        params.push('courseId=test_course_123');
+                        params.push('itemId=test_item_456');
+                        params.push('attachmentId=test_attachment_789');
+                    }
+                    if (viewType === 'review') {
+                        params.push('courseId=test_course_123');
+                        params.push('itemId=test_item_456');
+                        params.push('attachmentId=test_attachment_789');
+                        params.push('submissionId=test_submission_abc');
+                    }
+                }
+
+                if (customParams) {
+                    params.push(customParams);
+                }
+
+                if (params.length > 0) {
+                    url += '?' + params.join('&');
+                }
+            }
+
+            const iframe = document.getElementById('testIframe');
+            iframe.width = size[0];
+            iframe.height = size[1];
+            iframe.src = url;
+
+            document.getElementById('sizeLabel').textContent = `${size[0]} x ${size[1]}`;
+            document.getElementById('fullUrl').textContent = url;
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', updateIframe);
+    </script>
+</body>
+</html>

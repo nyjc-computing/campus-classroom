@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher View - Campus Classroom</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div id="teacher-view">
+        <div class="text-center py-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Loading assignment...</p>
+        </div>
+    </div>
+
+    <script>
+        // Context passed from backend
+        const context = {{ context | tojson }};
+        const userId = {{ user_id | tojson }};
+
+        // Notify parent Classroom of content height (postMessage)
+        function resizeIframe() {
+            const height = document.body.scrollHeight;
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    action: 'resize',
+                    height: height
+                }, '*');
+            }
+        }
+
+        // Load and display assignment
+        async function loadAssignment() {
+            // Determine if we're editing existing or creating new
+            // For now, show a simple form to create/select assignment
+
+            const container = document.getElementById('teacher-view');
+
+            container.innerHTML = `
+                <div class="p-3">
+                    <h6 class="mb-3">Google Classroom Context:</h6>
+                    <div class="bg-light p-3 rounded mb-4">
+                        <p><strong>Course ID:</strong> ${context.courseId}</p>
+                        <p><strong>Item ID:</strong> ${context.itemId}</p>
+                        <p><strong>Attachment ID:</strong> ${context.attachmentId || 'None'}</p>
+                    </div>
+
+                    <h6 class="mb-3">Select or Create Assignment</h6>
+
+                    <div class="mb-3">
+                        <label class="form-label">Choose an existing assignment:</label>
+                        <select class="form-select" id="assignment-select" onchange="loadAssignmentDetails()">
+                            <option value="">-- Select Assignment --</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <a href="/assignments/new" target="_blank" class="btn btn-primary">
+                            + Create New Assignment
+                        </a>
+                    </div>
+
+                    <div id="assignment-details" class="d-none">
+                        <h6>Assignment Preview:</h6>
+                        <div id="preview-content"></div>
+                        <button type="button" class="btn btn-success mt-2" onclick="attachAssignment()">
+                            Attach to This Assignment
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // Load assignments
+            loadAssignments();
+        }
+
+        async function loadAssignments() {
+            try {
+                const response = await fetch(`/api/v1/assignments?created_by=${userId}`);
+                if (!response.ok) throw new Error('Failed to load assignments');
+
+                const assignments = await response.json();
+                const select = document.getElementById('assignment-select');
+
+                assignments.forEach(a => {
+                    const option = document.createElement('option');
+                    option.value = a.id;
+                    option.textContent = a.title;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading assignments:', error);
+            }
+        }
+
+        async function loadAssignmentDetails() {
+            const select = document.getElementById('assignment-select');
+            const assignmentId = select.value;
+            const detailsDiv = document.getElementById('assignment-details');
+            const previewDiv = document.getElementById('preview-content');
+
+            if (!assignmentId) {
+                detailsDiv.classList.add('d-none');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/assignments/${assignmentId}`);
+                if (!response.ok) throw new Error('Failed to load assignment');
+
+                const assignment = await response.json();
+
+                previewDiv.innerHTML = `
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">${escapeHtml(assignment.title)}</h5>
+                            ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
+                            <p><strong>Questions:</strong> ${assignment.questions.length}</p>
+                        </div>
+                    </div>
+                `;
+
+                detailsDiv.classList.remove('d-none');
+                resizeIframe();
+            } catch (error) {
+                console.error('Error loading assignment:', error);
+            }
+        }
+
+        async function attachAssignment() {
+            const select = document.getElementById('assignment-select');
+            const assignmentId = select.value;
+
+            if (!assignmentId) {
+                alert('Please select an assignment first');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/assignments/${assignmentId}/links`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        course_id: context.courseId,
+                        coursework_id: context.itemId,
+                        attachment_id: context.attachmentId,
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to attach assignment');
+
+                alert('Assignment attached successfully!');
+            } catch (error) {
+                console.error('Error attaching assignment:', error);
+                alert('Failed to attach assignment');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        loadAssignment();
+        window.addEventListener('resize', resizeIframe);
+        document.addEventListener('DOMContentLoaded', resizeIframe);
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</body>
+</html>
