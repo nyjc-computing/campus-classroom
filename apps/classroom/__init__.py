@@ -5,11 +5,16 @@ Campus Classroom Application: assignment platform with Google Classroom integrat
 
 import os
 
+from dotenv import load_dotenv
+
 import campus_python
 import flask
 from campus import flask_campus
 
 from . import routes
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def create_app():
