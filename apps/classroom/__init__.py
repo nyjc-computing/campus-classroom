@@ -56,6 +56,7 @@ def create_app():
     # Register API routes
     routes.assignments.register_routes(app, login_manager)
     routes.submissions.register_routes(app, login_manager)
+    routes.iframe.register_routes(app, login_manager)
 
     # Register UI routes
     @app.get("/")
@@ -96,5 +97,11 @@ def create_app():
     def submission_view(submission_id: str, **_):
         """View submission page."""
         return flask.render_template("submissions/view.html", submission_id=submission_id)
+
+    # Test routes (for local development)
+    @app.get("/test/iframe")
+    def test_iframe():
+        """Test page for iframe views."""
+        return flask.render_template("test-iframe.html")
 
     return app
