@@ -1,0 +1,17 @@
+{
+	"name": "Python Flask DevContainer",
+	"image": "mcr.microsoft.com/devcontainers/python:3.11",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python"
+			},
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance"
+			]
+		}
+	},
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"remoteUser": "vscode"
+}
