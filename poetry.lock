@@ -162,7 +162,7 @@ werkzeug = "^3.0.0"
 type = "git"
 url = "https://github.com/nyjc-computing/campus.git"
 reference = "weekly"
-resolved_reference = "4c48dd4c163b749eb0485d5527a01519e74edd02"
+resolved_reference = "b1bf14406b3d0b42f17df9a900624a81c30a9be6"
 
 [[package]]
 name = "certifi"
