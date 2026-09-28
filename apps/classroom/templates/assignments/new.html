@@ -22,7 +22,9 @@
                 <div class="mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h6>Questions</h6>
-                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQuestion()">+ Add Question</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addTopLevelQuestion()">
+                            <i class="bi bi-plus-lg me-1"></i>Add Question
+                        </button>
                     </div>
                     <div id="questions-container"></div>
                 </div>
@@ -37,42 +39,301 @@
 </div>
 
 <script>
-let questionCount = 0;
+// Question ID generation
+const LEVEL1_NUMBERS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const LEVEL2_LETTERS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'];
+const LEVEL3_ROMAN = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+                       'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx'];
 
-function addQuestion() {
-    questionCount++;
-    const container = document.getElementById('questions-container');
-    const questionId = `q${questionCount}`;
-
-    const questionHtml = `
-        <div class="card mb-3" data-question-id="${questionId}">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <h6 class="mb-0">Question ${questionCount}</h6>
-                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeQuestion('${questionId}')">&times;</button>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Prompt (optional)</label>
-                    <textarea class="form-control question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Question <span class="text-danger">*</span></label>
-                    <textarea class="form-control question-text" rows="2" required placeholder="Enter your question here..."></textarea>
-                </div>
-            </div>
-        </div>
-    `;
-
-    container.insertAdjacentHTML('beforeend', questionHtml);
-}
-
-function removeQuestion(questionId) {
-    const card = document.querySelector(`[data-question-id="${questionId}"]`);
-    if (card) {
-        card.remove();
+function generateQuestionId(level, index) {
+    switch(level) {
+        case 1: return 'q' + LEVEL1_NUMBERS[index];
+        case 2: return LEVEL2_LETTERS[index];
+        case 3: return LEVEL3_ROMAN[index];
+        default: return (index + 1).toString();
     }
 }
 
+// Recalculate all question IDs from the tree structure (PRD §6.6: qN, qN.letter, qN.letter.roman)
+function recalculateAllIds() {
+    document.querySelectorAll('#questions-container > .question-tree').forEach((tree, treeIndex) => {
+        updateTreeIds(tree, generateQuestionId(1, treeIndex));
+    });
+}
+
+// Set the tree's own question ID, then recurse into its subquestions
+function updateTreeIds(tree, id) {
+    const card = tree.querySelector(':scope > .question-card');
+    if (!card) return;
+
+    card.querySelector('.question-id-badge').textContent = id;
+    card.dataset.level = id.split('.').length;
+
+    const subquestions = card.nextElementSibling;
+    if (subquestions && subquestions.classList.contains('subquestions')) {
+        const childLevel = id.split('.').length + 1;
+        subquestions.querySelectorAll(':scope > .question-tree').forEach((subTree, subIndex) => {
+            updateTreeIds(subTree, id + '.' + generateQuestionId(childLevel, subIndex));
+        });
+    }
+}
+
+// Add a new question card
+function createQuestionCard(level = 1) {
+    return `
+        <div class="question-card" draggable="true" data-level="${level}">
+            <div class="question-card-header">
+                <div class="d-flex align-items-center">
+                    <span class="drag-handle" title="Drag to reorder">
+                        <i class="bi bi-grip-vertical"></i>
+                    </span>
+                    <span class="question-id-badge">q${level === 1 ? '1' : ''}</span>
+                </div>
+                <div class="question-actions">
+                    ${level < 3 ? `
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addSubpart(this)" title="Add subpart">
+                            <i class="bi bi-plus"></i> Subpart
+                        </button>
+                    ` : ''}
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeQuestion(this)" title="Remove">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small text-muted">Prompt (optional)</label>
+                <textarea class="form-control question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
+            </div>
+            <div class="mb-0">
+                <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
+                <textarea class="form-control question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+            </div>
+        </div>
+    `;
+}
+
+// Add top-level question
+function addTopLevelQuestion() {
+    const container = document.getElementById('questions-container');
+    const tree = document.createElement('div');
+    tree.className = 'question-tree';
+    tree.innerHTML = createQuestionCard(1);
+    container.appendChild(tree);
+
+    setupDragAndDrop(tree.querySelector('.question-card'));
+    recalculateAllIds();
+}
+
+// Add subpart to existing question
+function addSubpart(button) {
+    const card = button.closest('.question-card');
+    let subquestions = card.nextElementSibling;
+
+    if (!subquestions || !subquestions.classList.contains('subquestions')) {
+        subquestions = document.createElement('div');
+        subquestions.className = 'subquestions';
+        card.after(subquestions);
+    }
+
+    const newLevel = parseInt(card.dataset.level || 1) + 1;
+    const tree = document.createElement('div');
+    tree.className = 'question-tree';
+    tree.innerHTML = createQuestionCard(newLevel);
+    subquestions.appendChild(tree);
+
+    setupDragAndDrop(tree.querySelector('.question-card'));
+    recalculateAllIds();
+}
+
+// Remove question (with all of its subparts)
+function removeQuestion(button) {
+    const card = button.closest('.question-card');
+    const tree = card.closest('.question-tree');
+
+    const subquestions = card.nextElementSibling;
+    const hasSubparts = subquestions && subquestions.classList.contains('subquestions')
+        && subquestions.querySelectorAll('.question-card').length > 0;
+    if (hasSubparts && !confirm('Delete this question and all its subparts?')) {
+        return;
+    }
+
+    if (subquestions && subquestions.classList.contains('subquestions')) {
+        subquestions.remove();
+    }
+    card.remove();
+
+    // Clean up containers left empty up the chain
+    let node = tree;
+    const topLevel = document.getElementById('questions-container');
+    while (node && node !== topLevel) {
+        const parent = node.parentElement;
+        if (!node.querySelector('.question-card')) {
+            node.remove();
+        }
+        node = parent;
+    }
+
+    recalculateAllIds();
+}
+
+// Drag and drop setup
+let draggedElement = null;
+
+function setupDragAndDrop(card) {
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragend', handleDragEnd);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('dragenter', handleDragEnter);
+    card.addEventListener('dragleave', handleDragLeave);
+    card.addEventListener('drop', handleDrop);
+}
+
+function handleDragStart(e) {
+    draggedElement = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    draggedElement = null;
+    recalculateAllIds();
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function handleDragEnter(e) {
+    e.preventDefault();
+    const draggedTree = draggedElement && draggedElement.closest('.question-tree');
+    if (draggedElement && this !== draggedElement && !(draggedTree && draggedTree.contains(this))) {
+        this.classList.add('drag-over');
+    }
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+function questionDepth(card) {
+    return card.querySelector('.question-id-badge').textContent.split('.').length;
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.classList.remove('drag-over');
+
+    if (!draggedElement || this === draggedElement) {
+        return false;
+    }
+
+    const sourceCard = draggedElement;
+    const sourceTree = sourceCard.closest('.question-tree');
+    const targetCard = this;
+    const targetTree = targetCard.closest('.question-tree');
+
+    // Refuse drops into the dragged question's own subtree
+    if (sourceTree.contains(targetCard)) {
+        return false;
+    }
+
+    const sourceDepth = questionDepth(sourceCard);
+    const targetDepth = questionDepth(targetCard);
+
+    if (sourceDepth === targetDepth) {
+        // Reorder: take over the target's spot (whole group moves together)
+        targetTree.before(sourceTree);
+    } else if (sourceDepth < targetDepth) {
+        // Demote: become the last subpart of the target
+        let subquestions = targetCard.nextElementSibling;
+        if (!subquestions || !subquestions.classList.contains('subquestions')) {
+            subquestions = document.createElement('div');
+            subquestions.className = 'subquestions';
+            targetCard.after(subquestions);
+        }
+        subquestions.appendChild(sourceTree);
+    } else {
+        // Promote: follow the target as a sibling at the target's level
+        targetTree.after(sourceTree);
+    }
+
+    cleanupEmptyContainers();
+    recalculateAllIds();
+    return false;
+}
+
+function cleanupEmptyContainers() {
+    document.querySelectorAll('#questions-container .subquestions').forEach(sub => {
+        if (!sub.querySelector('.question-card')) {
+            sub.remove();
+        }
+    });
+    document.querySelectorAll('#questions-container .question-tree').forEach(tree => {
+        if (!tree.querySelector(':scope > .question-card')) {
+            tree.remove();
+        }
+    });
+}
+
+// Collect all questions from the tree
+function collectQuestions(container) {
+    const questions = [];
+    const trees = container.querySelectorAll(':scope > .question-tree');
+
+    trees.forEach(tree => {
+        const card = tree.querySelector(':scope > .question-card');
+        if (!card) return;
+
+        const badge = card.querySelector('.question-id-badge');
+        const prompt = card.querySelector('.question-prompt').value.trim();
+        const questionText = card.querySelector('.question-text').value.trim();
+
+        const question = {
+            id: badge.textContent,
+            prompt: prompt,
+            question: questionText
+        };
+
+        // Collect subquestions
+        const subquestions = card.nextElementSibling;
+        if (subquestions && subquestions.classList.contains('subquestions')) {
+            const subQuestions = collectQuestions(subquestions);
+            if (subQuestions.length > 0) {
+                question.subquestions = subQuestions;
+            }
+        }
+
+        questions.push(question);
+    });
+
+    return questions;
+}
+
+// Flatten nested questions into a single array.
+// IDs from the badges are already full dotted paths (recalculateAllIds runs after every change).
+function flattenQuestions(questions) {
+    const flat = [];
+
+    questions.forEach(q => {
+        flat.push({
+            id: q.id,
+            prompt: q.prompt,
+            question: q.question
+        });
+
+        if (q.subquestions) {
+            flat.push(...flattenQuestions(q.subquestions));
+        }
+    });
+
+    return flat;
+}
+
+// Submit assignment
 async function submitAssignment(e) {
     e.preventDefault();
 
@@ -85,23 +346,21 @@ async function submitAssignment(e) {
         return;
     }
 
-    // Collect questions
-    const questions = [];
-    document.querySelectorAll('[data-question-id]').forEach((card, index) => {
-        const prompt = card.querySelector('.question-prompt').value.trim();
-        const questionText = card.querySelector('.question-text').value.trim();
+    // Collect and flatten questions
+    const container = document.getElementById('questions-container');
+    const nestedQuestions = collectQuestions(container);
+    const questions = flattenQuestions(nestedQuestions);
 
-        if (!questionText) {
-            alert(`Question ${index + 1} must have a question`);
-            return;
-        }
+    if (questions.length === 0) {
+        alert('Please add at least one question');
+        return;
+    }
 
-        questions.push({
-            id: `q${index + 1}`,
-            prompt: prompt,
-            question: questionText
-        });
-    });
+    const incomplete = questions.find(q => !q.question);
+    if (incomplete) {
+        alert(`Question ${incomplete.id} is missing its question text.`);
+        return;
+    }
 
     const payload = {
         title: title,
@@ -119,9 +378,7 @@ async function submitAssignment(e) {
         if (!response.ok) throw new Error('Failed to create assignment');
 
         const data = await response.json();
-
-        // Redirect to the assignment view
-        window.location.href = `{{ url_for('assignment_view', assignment_id='${data.id}') }}`;
+        window.location.href = `/assignments/${data.id}`;
     } catch (error) {
         console.error('Error creating assignment:', error);
         alert('Failed to create assignment. Please try again.');
@@ -135,10 +392,6 @@ document.getElementById('assignment-form').addEventListener('submit', submitAssi
 .question-prompt, .question-text {
     font-family: monospace;
     font-size: 0.9rem;
-}
-
-[data-question-id] {
-    border-left: 3px solid var(--border-color);
 }
 </style>
 {% endblock %}
