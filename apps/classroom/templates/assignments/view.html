@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ assignment.title }}{% endblock %}
+{% block title %}Assignment{% endblock %}
 
 {% block content %}
 <div class="container-md mt-4">
@@ -13,70 +13,177 @@
     <div id="assignment-container" class="d-none"></div>
 </div>
 
+<script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
 const assignmentId = {{ assignment_id | tojson }};
+let assignment = null;
+let editing = false;
+
+function isLocked() {
+    return assignment.classroom_links && assignment.classroom_links.length > 0;
+}
 
 async function loadAssignment() {
     try {
         const response = await fetch(`/api/v1/assignments/${assignmentId}`);
         if (!response.ok) throw new Error('Failed to load assignment');
 
-        const assignment = await response.json();
-        const container = document.getElementById('assignment-container');
-
-        // Render assignment
-        container.innerHTML = `
-            <nav aria-label="breadcrumb" class="mb-4">
-                <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{{ url_for('assignments_list') }}">Assignments</a></li>
-                    <li class="breadcrumb-item active">${escapeHtml(assignment.title)}</li>
-                </ol>
-            </nav>
-
-            <div class="card mb-4">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-start mb-3">
-                        <h2>${escapeHtml(assignment.title)}</h2>
-                        ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
-                    </div>
-
-                    ${assignment.classroom_links && assignment.classroom_links.length > 0 ? `
-                        <div class="alert alert-info">
-                            This assignment is locked. Unlink from Google Classroom to edit.
-                            ${assignment.classroom_links.map(link => `
-                                <div class="small">
-                                    <strong>Course:</strong> ${link.course_id}<br>
-                                    <strong>Attachment:</strong> ${link.attachment_id || 'N/A'}
-                                </div>
-                            `).join('')}
-                        </div>
-                    ` : ''}
-
-                    <hr>
-
-                    <h5 class="mb-3">Questions (${assignment.questions.length})</h5>
-
-                    <div class="questions-list mb-4">
-                        ${assignment.questions.map(q => renderQuestion(q)).join('')}
-                    </div>
-
-                    <div class="d-flex gap-2 mt-4">
-                        ${assignment.classroom_links && assignment.classroom_links.length === 0 ? `
-                            <button type="button" class="btn btn-primary" onclick="linkToClassroom()">Link to Classroom</button>
-                        ` : ''}
-
-                        <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-secondary">Back</a>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        document.getElementById('assignment-loading').classList.add('d-none');
+        assignment = await response.json();
+        render();
     } catch (error) {
         console.error('Error loading assignment:', error);
         document.getElementById('assignment-container').innerHTML = `
             <div class="alert alert-danger">Failed to load assignment. Please <a href="{{ url_for('assignments_list') }}">go back</a>.</div>
         `;
+        document.getElementById('assignment-loading').classList.add('d-none');
+    }
+}
+
+function render() {
+    const container = document.getElementById('assignment-container');
+    container.innerHTML = `
+        <nav aria-label="breadcrumb" class="mb-4">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('assignments_list') }}">Assignments</a></li>
+                <li class="breadcrumb-item active">${escapeHtml(assignment.title)}</li>
+            </ol>
+        </nav>
+        ${editing ? renderEditMode() : renderViewMode()}
+    `;
+
+    if (editing) {
+        populateBuilderFromFlat(assignment.questions);
+        document.getElementById('edit-form').addEventListener('submit', saveEdit);
+    }
+
+    document.getElementById('assignment-loading').classList.add('d-none');
+    container.classList.remove('d-none');
+}
+
+function renderViewMode() {
+    return `
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <h2>${escapeHtml(assignment.title)}</h2>
+                </div>
+                ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
+
+                ${isLocked() ? `
+                    <div class="alert alert-info">
+                        This assignment is locked. Unlink from Google Classroom to edit.
+                        ${assignment.classroom_links.map(link => `
+                            <div class="small">
+                                <strong>Course:</strong> ${escapeHtml(link.course_id)}<br>
+                                <strong>Attachment:</strong> ${escapeHtml(link.attachment_id || 'N/A')}
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+
+                <hr>
+
+                <h5 class="mb-3">Questions (${assignment.questions.length})</h5>
+
+                <div class="questions-list mb-4">
+                    ${assignment.questions.map(q => renderQuestion(q)).join('')}
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    ${!isLocked() ? `
+                        <button type="button" class="btn btn-primary" onclick="startEdit()">Edit</button>
+                        <button type="button" class="btn btn-outline-primary" onclick="linkToClassroom()">Link to Classroom</button>
+                    ` : ''}
+
+                    <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-secondary">Back</a>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderEditMode() {
+    return `
+        <form id="edit-form" class="needs-validation">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="title" name="title" value="${escapeHtml(assignment.title || '')}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="3">${escapeHtml(assignment.description || '')}</textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6>Questions</h6>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addTopLevelQuestion()">
+                                <i class="bi bi-plus-lg me-1"></i>Add Question
+                            </button>
+                        </div>
+                        <div id="questions-container"></div>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="cancelEdit()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    `;
+}
+
+function startEdit() {
+    editing = true;
+    render();
+}
+
+function cancelEdit() {
+    editing = false;
+    render();
+}
+
+async function saveEdit(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const title = form.title.value.trim();
+    const description = form.description.value.trim();
+
+    if (!title) {
+        alert('Title is required');
+        return;
+    }
+
+    const questions = collectValidatedQuestions();
+    if (!questions) return;
+
+    try {
+        const response = await fetch(`/api/v1/assignments/${assignmentId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: title,
+                description: description || null,
+                questions: questions
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to save assignment');
+        }
+
+        assignment = await response.json();
+        editing = false;
+        render();
+    } catch (error) {
+        console.error('Error saving assignment:', error);
+        alert(error.message || 'Failed to save assignment. Please try again.');
     }
 }
 
@@ -116,6 +223,11 @@ loadAssignment();
 .breadcrumb-item + .breadcrumb-item::before {
     content: ">";
     margin-right: 0.5rem;
+}
+
+#questions-container .question-prompt, #questions-container .question-text {
+    font-family: monospace;
+    font-size: 0.9rem;
 }
 </style>
 {% endblock %}
