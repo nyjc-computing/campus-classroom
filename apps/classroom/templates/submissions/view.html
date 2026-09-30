@@ -66,11 +66,14 @@ async function loadSubmission() {
         `;
 
         document.getElementById('submission-loading').classList.add('d-none');
+        document.getElementById('submission-container').classList.remove('d-none');
     } catch (error) {
         console.error('Error loading submission:', error);
         document.getElementById('submission-container').innerHTML = `
             <div class="alert alert-danger">Failed to load submission. Please <a href="{{ url_for('assignments_list') }}">go back</a>.</div>
         `;
+        document.getElementById('submission-loading').classList.add('d-none');
+        document.getElementById('submission-container').classList.remove('d-none');
     }
 }
 
@@ -88,17 +91,16 @@ function renderQuestionWithResponse(q, submission) {
                 <p class="mb-2">${escapeHtml(q.question)}</p>
             </div>
 
-            ${response ? `
-                <div class="response-box">
-                    <label class="form-label text-muted small">Your Response:</label>
-                    <textarea
-                        class="form-control"
-                        id="response-${q.id}"
-                        rows="3"
-                        ${submission.submitted_at ? 'disabled' : ''}
-                        onchange="autoSave('${q.id}', this.value)">${escapeHtml(response.response_text || '')}</textarea>
-                </div>
-            ` : ''}
+            <div class="response-box">
+                <label class="form-label text-muted small">Your Response:</label>
+                <textarea
+                    class="form-control"
+                    id="response-${q.id}"
+                    rows="3"
+                    ${submission.submitted_at ? 'disabled' : ''}
+                    placeholder="${submission.submitted_at ? 'No response provided' : 'Type your response...'}"
+                    onchange="autoSave('${q.id}', this.value)">${escapeHtml(response?.response_text || '')}</textarea>
+            </div>
 
             ${feedback ? `
                 <div class="feedback-box">
@@ -126,11 +128,11 @@ function timestamp(dateStr) {
     return date.toLocaleDateString('en-SG', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-let autoSaveTimeout = null;
+let autoSaveTimeouts = {};
 
 function autoSave(questionId, value) {
-    clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(async () => {
+    clearTimeout(autoSaveTimeouts[questionId]);
+    autoSaveTimeouts[questionId] = setTimeout(async () => {
         await fetch(`/api/v1/submissions/${submissionId}/responses`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

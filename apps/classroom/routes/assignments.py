@@ -21,7 +21,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/api/v1/assignments")
     @login_manager.login_required
-    def list_assignments(user_id, campus, **_):
+    def list_assignments(**_):
         """List assignments, optionally filtered by teacher.
 
         Query parameters:
@@ -30,16 +30,18 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             JSON array of assignments
         """
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
         created_by = flask.request.args.get("created_by", user_id)
 
-        with campus.with_user_session(user_id) as client:
-            assignments = client.api.v1.assignments.list(created_by=created_by)
+        with campus.with_user_session() as client:
+            assignments = client.api.assignments.list(created_by=created_by)
 
         return flask.jsonify([a.to_resource() for a in assignments])
 
     @app.post("/api/v1/assignments")
     @login_manager.login_required
-    def api_create_assignment(user_id, campus, **_):
+    def api_create_assignment(**_):
         """Create a new assignment.
 
         Request body:
@@ -51,13 +53,15 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Created assignment as JSON
         """
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
         data = flask.request.get_json()
 
         if not data or "title" not in data:
             return flask.jsonify({"error": "title is required"}), 400
 
-        with campus.with_user_session(user_id) as client:
-            assignment = client.api.v1.assignments.new(
+        with campus.with_user_session() as client:
+            assignment = client.api.assignments.new(
                 title=data["title"],
                 description=data.get("description"),
                 questions=data.get("questions"),
@@ -68,15 +72,17 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/api/v1/assignments/<assignment_id>")
     @login_manager.login_required
-    def api_get_assignment(assignment_id: str, user_id, campus, **_):
+    def api_get_assignment(assignment_id: str, **_):
         """Get an assignment by ID.
 
         Returns:
             Assignment as JSON, or 404 if not found
         """
-        with campus.with_user_session(user_id) as client:
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
             try:
-                assignment = client.api.v1.assignments[assignment_id].get()
+                assignment = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
@@ -86,7 +92,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.patch("/api/v1/assignments/<assignment_id>")
     @login_manager.login_required
-    def api_update_assignment(assignment_id: str, user_id: str, campus, **_):
+    def api_update_assignment(assignment_id: str, **_):
         """Update an assignment.
 
         Request body: Fields to update (title, description, questions, etc.)
@@ -94,14 +100,16 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated assignment as JSON, or 404 if not found
         """
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "No update data provided"}), 400
 
         # Check ownership first
-        with campus.with_user_session(user_id) as client:
+        with campus.with_user_session() as client:
             try:
-                current = client.api.v1.assignments[assignment_id].get()
+                current = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
@@ -127,14 +135,14 @@ def register_routes(app: flask.Flask, login_manager):
             if "classroom_links" in data:
                 updates["classroom_links"] = data["classroom_links"]
 
-            client.api.v1.assignments[assignment_id].update(**updates)
-            updated = client.api.v1.assignments[assignment_id].get()
+            client.api.assignments[assignment_id].update(**updates)
+            updated = client.api.assignments[assignment_id].get()
 
         return flask.jsonify(updated.to_resource())
 
     @app.delete("/api/v1/assignments/<assignment_id>")
     @login_manager.login_required
-    def api_delete_assignment(assignment_id: str, user_id: str, campus, **_):
+    def api_delete_assignment(assignment_id: str, **_):
         """Delete an assignment.
 
         This will cascade delete all associated submissions.
@@ -145,10 +153,12 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             204 on success, 404 if not found, 409 if locked
         """
-        with campus.with_user_session(user_id) as client:
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
             # Check ownership first
             try:
-                current = client.api.v1.assignments[assignment_id].get()
+                current = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
@@ -167,13 +177,13 @@ def register_routes(app: flask.Flask, login_manager):
                         "classroom_links": [asdict(link) for link in current.classroom_links],
                     }), 409
 
-            client.api.v1.assignments[assignment_id].delete()
+            client.api.assignments[assignment_id].delete()
 
         return "", 204
 
     @app.post("/api/v1/assignments/<assignment_id>/links")
     @login_manager.login_required
-    def api_add_classroom_link(assignment_id: str, user_id: str, campus, **_):
+    def api_add_classroom_link(assignment_id: str, **_):
         """Add a Google Classroom link to an assignment.
 
         Request body:
@@ -184,14 +194,16 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated assignment as JSON
         """
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data or "course_id" not in data or "coursework_id" not in data:
             return flask.jsonify({"error": "course_id and coursework_id are required"}), 400
 
-        with campus.with_user_session(user_id) as client:
+        with campus.with_user_session() as client:
             # Check ownership
             try:
-                current = client.api.v1.assignments[assignment_id].get()
+                current = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
@@ -200,18 +212,18 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.created_by) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
-            client.api.v1.assignments[assignment_id].links.add(
+            client.api.assignments[assignment_id].links.add(
                 course_id=data["course_id"],
                 coursework_id=data["coursework_id"],
                 attachment_id=data.get("attachment_id"),
             )
-            updated = client.api.v1.assignments[assignment_id].get()
+            updated = client.api.assignments[assignment_id].get()
 
         return flask.jsonify(updated.to_resource())
 
     @app.delete("/api/v1/assignments/<assignment_id>/links/<course_id>")
     @login_manager.login_required
-    def api_remove_classroom_link(assignment_id: str, course_id: str, user_id: str, campus, **_):
+    def api_remove_classroom_link(assignment_id: str, course_id: str, **_):
         """Remove a Google Classroom link from an assignment.
 
         Note: This endpoint removes the link from the assignment's classroom_links
@@ -220,10 +232,12 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated assignment as JSON
         """
-        with campus.with_user_session(user_id) as client:
+        user_id = flask.g.user.id
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
             # Check ownership
             try:
-                current = client.api.v1.assignments[assignment_id].get()
+                current = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
@@ -236,8 +250,8 @@ def register_routes(app: flask.Flask, login_manager):
             updated_links = [l for l in current.classroom_links if l.course_id != course_id]
             links_data = [asdict(l) for l in updated_links]
 
-            client.api.v1.assignments[assignment_id].update(classroom_links=links_data)
-            updated = client.api.v1.assignments[assignment_id].get()
+            client.api.assignments[assignment_id].update(classroom_links=links_data)
+            updated = client.api.assignments[assignment_id].get()
 
         return flask.jsonify(updated.to_resource())
 

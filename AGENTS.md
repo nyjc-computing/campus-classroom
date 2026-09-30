@@ -294,8 +294,8 @@ def register_routes(app):
 │                                                              │
 │  ┌────────────────────────────────────────────────────────────┐    │
 │  │  Routes (apps/classroom/routes/)                    │    │
-│  │  - assignments.py  (uses campus.api.v1.assignments) │    │
-│  │  - submissions.py  (uses campus.api.v1.submissions) │    │
+│  │  - assignments.py  (uses campus.api.assignments) │    │
+│  │  - submissions.py  (uses campus.api.submissions) │    │
 │  └────────────────────────────────────────────────────────────┘    │
 │                           │                                   │
 │                           ▼                                   │
@@ -322,7 +322,7 @@ def register_routes(app):
 **What this means for implementation:**
 - **DO NOT** create local database tables, migrations, or storage code
 - **DO** use `campus.with_user_session(user_id) as client:` context for all data operations
-- **DO** access resources via `client.api.v1.assignments` and `client.api.v1.submissions`
+- **DO** access resources via `client.api.assignments` and `client.api.submissions`
 - **Models** are imported from `campus.model` (Assignment, Submission, Question, Response, Feedback, ClassroomLink)
 
 **Models are defined in:** `d:\nyjc-computing\campus\campus\model\`
@@ -341,8 +341,8 @@ def register_routes(app):
 
 | Data | Stored In | Accessed Via |
 |-------|-------------|--------------|
-| Assignments (questions, title, description) | Campus API (MongoDB) | `client.api.v1.assignments` |
-| Submissions (responses, feedback) | Campus API (MongoDB) | `client.api.v1.submissions` |
+| Assignments (questions, title, description) | Campus API (MongoDB) | `client.api.assignments` |
+| Submissions (responses, feedback) | Campus API (MongoDB) | `client.api.submissions` |
 | User authentication | Campus API (PostgreSQL) | `login_manager` (flask_campus) |
 | Session state | Flask session | `flask.session` |
 
