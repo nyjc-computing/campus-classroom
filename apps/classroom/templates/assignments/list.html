@@ -27,7 +27,7 @@
 // Load assignments on page load
 async function loadAssignments() {
     try {
-        const response = await fetch('/api/v1/assignments?created_by={{ g.user }}');
+        const response = await fetch('/api/v1/assignments?created_by={{ g.user.id }}');
         if (!response.ok) throw new Error('Failed to load assignments');
 
         const data = await response.json();

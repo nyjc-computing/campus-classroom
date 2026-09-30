@@ -36,7 +36,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/addon/teacher")
     @login_manager.login_required
-    def addon_teacher(user_id, campus, **_):
+    def addon_teacher(**_):
         """Teacher View iframe - create and edit assignments.
 
         URL parameters (from Google Classroom):
@@ -46,6 +46,7 @@ def register_routes(app: flask.Flask, login_manager):
 
         For local testing, these can be omitted to use mock values.
         """
+        user_id = flask.g.user.id
         context = get_mock_context(
             courseId=flask.request.args.get("courseId"),
             itemId=flask.request.args.get("itemId"),
@@ -60,7 +61,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/addon/student")
     @login_manager.login_required
-    def addon_student(user_id, campus, **_):
+    def addon_student(**_):
         """Student View iframe - complete assignment.
 
         URL parameters (from Google Classroom):
@@ -70,6 +71,7 @@ def register_routes(app: flask.Flask, login_manager):
 
         For local testing, these can be omitted to use mock values.
         """
+        user_id = flask.g.user.id
         context = get_mock_context(
             courseId=flask.request.args.get("courseId"),
             itemId=flask.request.args.get("itemId"),
@@ -84,7 +86,7 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.get("/addon/review")
     @login_manager.login_required
-    def addon_review(user_id, campus, **_):
+    def addon_review(**_):
         """Student Work Review iframe - teacher reviews submissions.
 
         URL parameters (from Google Classroom):
@@ -95,6 +97,7 @@ def register_routes(app: flask.Flask, login_manager):
 
         For local testing, these can be omitted to use mock values.
         """
+        user_id = flask.g.user.id
         context = get_mock_context(
             courseId=flask.request.args.get("courseId"),
             itemId=flask.request.args.get("itemId"),
