@@ -122,6 +122,9 @@ replit.nix
 *.swo
 *~
 
+# ZCode client state (generated ignore sync)
+.zcodeignore
+
 # mypy
 .mypy_cache/
 .dmypy.json
