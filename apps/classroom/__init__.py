@@ -62,6 +62,7 @@ def create_app():
     routes.assignments.register_routes(app, login_manager)
     routes.submissions.register_routes(app, login_manager)
     routes.iframe.register_routes(app, login_manager)
+    routes.classroom_auth.register_routes(app, login_manager)
 
     # Register UI routes
     @app.get("/")
