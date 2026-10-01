@@ -515,12 +515,17 @@ CLIENT_SECRET="campus_client_secret"
 ENV="development"  # or "staging" or "production"
 SECRET_KEY="flask_session_secret"
 
+# Canonical public origin of this service (scheme://host[:port], no path).
+# Required for login: builds the OAuth callback {PUBLIC_URL}/finalize_login,
+# which must be registered on the campus client's redirect_uris before use.
+# HOSTNAME is a bind address and is NOT used for URL generation (campus#652).
+PUBLIC_URL="https://classroom.campus.nyjc.dev"
+
 # Google OAuth - NOT NEEDED (use Campus OAuth with incremental scope approval)
 # Campus OAuth tokens will be refreshed to include Classroom scopes via incremental approval
 # See Resolved Question #2 in §7.1
 
 # Optional
-HOSTNAME="classroom.campus.nyjc.dev"
 PORT="5000"
 ```
 
