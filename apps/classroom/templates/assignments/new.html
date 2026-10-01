@@ -38,6 +38,7 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
 // Submit assignment
@@ -69,7 +70,10 @@ async function submitAssignment(e) {
             body: JSON.stringify(payload)
         });
 
-        if (!response.ok) throw new Error('Failed to create assignment');
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(formatApiError(err, 'Failed to create assignment'));
+        }
 
         const data = await response.json();
         window.location.href = `/assignments/${data.id}`;

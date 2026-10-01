@@ -9,6 +9,24 @@ import flask
 from dataclasses import asdict
 
 import campus.model
+from campus_python.errors import APIError
+
+
+def upstream_error_response(e: APIError):
+    """Pass a campus APIError through to the client, preserving the upstream
+    status code and error envelope (e.g. 422 VALIDATION_FAILED naming the
+    offending questions[i] entry) instead of surfacing an opaque 500.
+    """
+    error = {
+        "code": getattr(e, "error", None) or "UPSTREAM_ERROR",
+        "message": e.error_description or "Campus API request failed",
+    }
+    if getattr(e, "errors", None):
+        error["errors"] = [
+            {"field": fe.field, "code": fe.code, "message": fe.message}
+            for fe in e.errors
+        ]
+    return flask.jsonify({"error": error}), getattr(e, "status_code", 502)
 
 
 def register_routes(app: flask.Flask, login_manager):
@@ -61,12 +79,15 @@ def register_routes(app: flask.Flask, login_manager):
             return flask.jsonify({"error": "title is required"}), 400
 
         with campus.with_user_session() as client:
-            assignment = client.api.assignments.new(
-                title=data["title"],
-                description=data.get("description"),
-                questions=data.get("questions"),
-                classroom_links=data.get("classroom_links"),
-            )
+            try:
+                assignment = client.api.assignments.new(
+                    title=data["title"],
+                    description=data.get("description"),
+                    questions=data.get("questions"),
+                    classroom_links=data.get("classroom_links"),
+                )
+            except APIError as e:
+                return upstream_error_response(e)
 
         return flask.jsonify(assignment.to_resource()), 201
 
@@ -135,7 +156,10 @@ def register_routes(app: flask.Flask, login_manager):
             if "classroom_links" in data:
                 updates["classroom_links"] = data["classroom_links"]
 
-            client.api.assignments[assignment_id].update(**updates)
+            try:
+                client.api.assignments[assignment_id].update(**updates)
+            except APIError as e:
+                return upstream_error_response(e)
             updated = client.api.assignments[assignment_id].get()
 
         return flask.jsonify(updated.to_resource())
