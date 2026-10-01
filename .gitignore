@@ -78,7 +78,8 @@ profile_default/
 ipython_config.py
 
 # pyenv
-.python-version
+# (.python-version IS committed: the 3.11 pin is intentional and the
+# Railway build reads it)
 
 # pipenv
 #Pipfile.lock
