@@ -13,6 +13,7 @@
     <div id="assignment-container" class="d-none"></div>
 </div>
 
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
 const assignmentId = {{ assignment_id | tojson }};
@@ -175,7 +176,7 @@ async function saveEdit(e) {
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || 'Failed to save assignment');
+            throw new Error(formatApiError(err, 'Failed to save assignment'));
         }
 
         assignment = await response.json();
