@@ -419,10 +419,12 @@ URIs must be registered on the campus client **before** wiring
   by campus#652, and `HOSTNAME` here is a bind address (`0.0.0.0`) that could
   never produce a usable URL anyway.
 - **Registered URIs for this repo's client** (`uid-client-ef56f01c`,
-  "campus-classroom-dev", development environment; registered 2026-09-30):
+  "campus-classroom-dev", development environment; re-registered 2026-10-01):
   - `http://localhost:5000/finalize_login` (local dev)
-  - `https://classroom.campus.nyjc.dev/finalize_login` (PRD-named dev domain —
-    re-confirm against the actual Railway domain and re-register if it differs)
+  - `https://campus-classroom-development.up.railway.app/finalize_login`
+    (Railway dev deployment; also set as `PUBLIC_URL` on the service — the
+    earlier provisional `classroom.campus.nyjc.dev` never existed in DNS and
+    has been removed)
   - Never record the client secret in docs or issues.
 - Changing the deployment domain, port, or scheme means **re-registering**: run
   `campus client update --client-id uid-client-ef56f01c --redirect-uri <full-callback-url>`
