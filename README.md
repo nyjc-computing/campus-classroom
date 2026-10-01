@@ -18,6 +18,11 @@ Early development. Login page implemented; assignment creation and Classroom int
    cp .env.example .env
    # Edit .env with your Campus API credentials
    ```
+   `PUBLIC_URL` is required for login: it is the canonical origin of this
+   service and determines the OAuth callback (`{PUBLIC_URL}/finalize_login`),
+   which must be registered on the campus client before login works (see
+   "Redirect URI Registration Contract" in AGENTS.md). Locally use
+   `PUBLIC_URL=http://localhost:5000`.
 
 3. **Run the development server:**
    ```bash

@@ -93,6 +93,9 @@ campus.api.circles   # Circles API
 CLIENT_ID="your_client_id"
 CLIENT_SECRET="your_client_secret"
 ENV="development"  # or "staging" or "production"
+# Optional explicit overrides (campus-api-python#53); derived from ENV when unset
+# CAMPUS_AUTH_URL="https://campusauth-development.up.railway.app"
+# CAMPUS_API_URL="https://campusapi-development.up.railway.app"
 ```
 
 **Environment URLs:**
@@ -209,9 +212,12 @@ CLIENT_ID="your_client_id"
 CLIENT_SECRET="your_client_secret"
 SECRET_KEY="flask_session_secret"
 ENV="development"
+# Canonical public origin (scheme://host[:port], no path); required for login —
+# builds the OAuth callback {PUBLIC_URL}/finalize_login
+PUBLIC_URL="https://your-app-domain"
 
 # Optional
-HOSTNAME="localhost"
+HOSTNAME="localhost"  # bind address only; NOT used for URL generation
 PORT="5000"
 ```
 
@@ -396,6 +402,39 @@ def register_routes(app):
 1. User logs into Classroom with Google account
 2. Campus OAuth stores `google_user_id` mapping
 3. Platform identifies user via Campus token + validates Google email matches
+
+### Redirect URI Registration Contract
+
+Campus is moving to exact-string `redirect_uri` validation on `GET /authorize`
+(campus#651, RFC 6749 §3.1.2.3): a mismatch returns 400 **without redirecting**.
+URIs must be registered on the campus client **before** wiring
+`OAuthLoginManager` and before enforcement flips.
+
+- The callback path is fixed by `campus.flask_campus`: `/login` builds the
+  callback as `url.full_url_for('auth.finalize_login')`, i.e. exactly
+  `{PUBLIC_URL}/finalize_login`, and matching against the client's registered
+  `redirect_uris` is **exact string**.
+- `PUBLIC_URL` (full origin, `scheme://host[:port]`, no path) is therefore
+  **required** for login. The legacy `https://{HOSTNAME}` fallback is removed
+  by campus#652, and `HOSTNAME` here is a bind address (`0.0.0.0`) that could
+  never produce a usable URL anyway.
+- **Registered URIs for this repo's client** (`uid-client-ef56f01c`,
+  "campus-classroom-dev", development environment; registered 2026-09-30):
+  - `http://localhost:5000/finalize_login` (local dev)
+  - `https://classroom.campus.nyjc.dev/finalize_login` (PRD-named dev domain —
+    re-confirm against the actual Railway domain and re-register if it differs)
+  - Never record the client secret in docs or issues.
+- Changing the deployment domain, port, or scheme means **re-registering**: run
+  `campus client update --client-id uid-client-ef56f01c --redirect-uri <full-callback-url>`
+  (repeat the flag for every URI; the update **replaces** the whole list, so
+  always re-pass the full set — verified 2026-10-01; requires campus-cli with
+  PR #16 and campus-api-python with PR #51).
+- **Symptom after a domain change:** a 400 from `/authorize` right after
+  switching domains = unregistered `redirect_uri`. The fix is re-registration,
+  not code.
+- Code guardrail: build absolute URLs only via
+  `campus.common.utils.url.full_url_for` / `canonical_origin()` — never
+  hand-concatenate `https://{HOSTNAME}` or similar.
 
 ### Data Model Considerations
 
