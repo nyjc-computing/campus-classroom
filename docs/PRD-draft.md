@@ -119,7 +119,7 @@ Develop an assignment platform that integrates with Google Classroom as an Add-O
 
 ### 4.4 Google Classroom Integration (Add-On)
 - [ ] **GC-1:** Platform must register as a Google Classroom Add-On via Workspace Marketplace SDK
-- [ ] **GC-2:** **Attachment Discovery iframe** - Teacher selects assignment during Classroom assignment creation
+- [x] **GC-2:** **Attachment Discovery iframe** - Teacher selects assignment during Classroom assignment creation — *resolved API-first (§6.7, §7.3 D1): teachers post from the platform's "Send to Google Classroom" flow instead of an in-Classroom picker; `/addon/discovery` renders a public pointer page to that flow (issue #13)*
 - [ ] **GC-3:** **Teacher View iframe** - Teacher creates and configures assignments
 - [ ] **GC-4:** **Student View iframe** - Student completes assignment within Classroom
 - [ ] **GC-5:** **Student Work Review iframe** - Teacher views submissions and provides feedback
@@ -683,7 +683,7 @@ The `AddOnAttachment` object created via Classroom API:
 - [ ] Google Cloud Console project setup
 - [ ] OAuth 2.0 integration with Google
 - [ ] Register as Classroom Add-On
-- [ ] Implement Attachment Discovery iframe
+- [x] Implement Attachment Discovery iframe (superseded API-first §6.7: `/addon/discovery` is a public pointer page to the platform flow, not a picker — issue #13)
 - [ ] Implement Teacher View iframe (create/edit assignments)
 - [ ] Implement Student View iframe (complete assignments)
 - [ ] Implement Student Work Review iframe (feedback)
