@@ -13,6 +13,41 @@
     <div id="assignment-container" class="d-none"></div>
 </div>
 
+<!-- Send-to-Classroom course picker (issue #10, PRD §6.7) -->
+<div class="modal fade" id="classroomPickerModal" tabindex="-1" aria-labelledby="classroomPickerTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="classroomPickerTitle">
+                    <i class="bi bi-mortarboard-fill me-2"></i>Send to Google Classroom
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="picker-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm" role="status">
+                        <span class="visually-hidden">Loading…</span>
+                    </div>
+                    <span class="ms-2 text-muted">Loading your classes…</span>
+                </div>
+                <div id="picker-error" class="d-none"></div>
+                <div id="picker-courses" class="d-none">
+                    <p class="text-muted small mb-2">
+                        Select one or more classes. Each gets a draft assignment
+                        in Google Classroom with this assignment attached.
+                    </p>
+                    <div id="picker-course-list" class="list-group"></div>
+                </div>
+                <div id="picker-results" class="d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary d-none" id="picker-send-btn" onclick="sendToClassroom()">Send to selected classes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
@@ -76,6 +111,7 @@ function renderViewMode() {
                         ${assignment.classroom_links.map(link => `
                             <div class="small">
                                 <strong>Course:</strong> ${escapeHtml(link.course_id)}<br>
+                                <strong>Coursework:</strong> ${escapeHtml(link.coursework_id || 'N/A')} ·
                                 <strong>Attachment:</strong> ${escapeHtml(link.attachment_id || 'N/A')}
                             </div>
                         `).join('')}
@@ -93,8 +129,11 @@ function renderViewMode() {
                 <div class="d-flex gap-2 mt-4">
                     ${!isLocked() ? `
                         <button type="button" class="btn btn-primary" onclick="startEdit()">Edit</button>
-                        <button type="button" class="btn btn-outline-primary" onclick="linkToClassroom()">Link to Classroom</button>
                     ` : ''}
+
+                    <button type="button" class="btn btn-success" onclick="openClassroomPicker()">
+                        <i class="bi bi-send me-1"></i>Send to Google Classroom
+                    </button>
 
                     <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-secondary">Back</a>
                 </div>
@@ -207,10 +246,164 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-async function linkToClassroom() {
-    // This will open Classroom - actual implementation via Google Classroom API
-    alert('To link this assignment to Google Classroom, you will need to create an assignment in Google Classroom and attach it as an add-on.');
+// --- Send to Google Classroom (issue #10, PRD §6.7) ---
+
+let pickerModal = null;
+let pickerCourses = [];
+let pickerCourseNames = {};
+
+function classroomAuthorizeUrl(missing) {
+    // Back to this page after the incremental consent screen.
+    const params = new URLSearchParams({ next: window.location.pathname });
+    if (missing && missing.length) params.set('scopes', missing.join(' '));
+    return `/classroom/authorize?${params.toString()}`;
 }
+
+function showPickerError(err) {
+    const box = document.getElementById('picker-error');
+    const e = (err && err.error) || {};
+    let html;
+    if (e.code === 'classroom_not_connected') {
+        html = `${escapeHtml(e.message)}
+            <a href="${classroomAuthorizeUrl()}" class="btn btn-sm btn-primary mt-2">Connect Google Classroom</a>`;
+    } else if (e.code === 'classroom_missing_scopes') {
+        html = `${escapeHtml(e.message)}
+            <a href="${classroomAuthorizeUrl(e.missing_scopes)}" class="btn btn-sm btn-primary mt-2">Grant permission</a>`;
+    } else {
+        html = escapeHtml(e.message || 'Could not reach Google Classroom.');
+    }
+    box.innerHTML = html;
+    box.classList.remove('d-none');
+    document.getElementById('picker-loading').classList.add('d-none');
+    document.getElementById('picker-courses').classList.add('d-none');
+    document.getElementById('picker-results').classList.add('d-none');
+    document.getElementById('picker-send-btn').classList.add('d-none');
+}
+
+function resetPicker() {
+    document.getElementById('picker-error').classList.add('d-none');
+    document.getElementById('picker-courses').classList.add('d-none');
+    document.getElementById('picker-results').classList.add('d-none');
+    document.getElementById('picker-send-btn').classList.add('d-none');
+    document.getElementById('picker-loading').classList.remove('d-none');
+    const btn = document.getElementById('picker-send-btn');
+    btn.disabled = false;
+    btn.textContent = 'Send to selected classes';
+}
+
+async function openClassroomPicker() {
+    pickerModal = pickerModal || new bootstrap.Modal('#classroomPickerModal');
+    resetPicker();
+    pickerModal.show();
+    loadCourses();
+}
+
+async function loadCourses() {
+    try {
+        const response = await fetch('/api/v1/classroom/courses');
+        if (!response.ok) {
+            showPickerError(await response.json().catch(() => ({})));
+            return;
+        }
+        const data = await response.json();
+        const linked = new Set((assignment.classroom_links || []).map(l => l.course_id));
+        pickerCourseNames = Object.fromEntries(data.courses.map(c => [c.id, c.name]));
+        pickerCourses = data.courses.filter(c => !linked.has(c.id));
+        renderCourseList();
+    } catch (error) {
+        console.error('Error loading Classroom courses:', error);
+        showPickerError({});
+    }
+}
+
+function renderCourseList() {
+    document.getElementById('picker-loading').classList.add('d-none');
+
+    if (!pickerCourses.length) {
+        showPickerError({ error: { message: 'All of your classes already have this assignment posted.' } });
+        return;
+    }
+
+    document.getElementById('picker-course-list').innerHTML = pickerCourses.map(c => `
+        <label class="list-group-item list-group-item-action">
+            <input class="form-check-input me-2 picker-course" type="checkbox" value="${escapeHtml(c.id)}">
+            ${escapeHtml(c.name || c.id)}${c.section ? `<span class="text-muted ms-1">· ${escapeHtml(c.section)}</span>` : ''}
+        </label>
+    `).join('');
+    document.getElementById('picker-courses').classList.remove('d-none');
+    updateSendButton();
+}
+
+function updateSendButton() {
+    const any = document.querySelectorAll('.picker-course:checked').length > 0;
+    document.getElementById('picker-send-btn').disabled = !any;
+}
+
+async function sendToClassroom() {
+    const courseIds = [...document.querySelectorAll('.picker-course:checked')].map(cb => cb.value);
+    if (!courseIds.length) return;
+
+    const btn = document.getElementById('picker-send-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…';
+
+    try {
+        const response = await fetch(`/api/v1/assignments/${assignmentId}/classroom/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ course_ids: courseIds })
+        });
+
+        if (!response.ok) {
+            showPickerError(await response.json().catch(() => ({})));
+            return;
+        }
+
+        const data = await response.json();
+        renderSendResults(data.results || []);
+        // Re-fetch so the lock banner and classroom_links reflect the send.
+        await loadAssignment();
+    } catch (error) {
+        console.error('Error sending to Classroom:', error);
+        showPickerError({ error: { message: 'Sending failed. Please try again.' } });
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send to selected classes';
+    }
+}
+
+const PICKER_ICONS = {
+    attached: 'bi-check-circle-fill text-success',
+    linked: 'bi-link-45deg text-success',
+    already_linked: 'bi-check2 text-muted',
+    error: 'bi-exclamation-triangle-fill text-danger'
+};
+const PICKER_LABELS = {
+    attached: 'Posted with add-on attachment',
+    linked: 'Posted with assignment link',
+    already_linked: 'Already posted',
+    error: 'Failed'
+};
+
+function renderSendResults(results) {
+    document.getElementById('picker-courses').classList.add('d-none');
+    const box = document.getElementById('picker-results');
+    box.innerHTML = '<h6 class="mb-3">Result</h6>' + results.map(r => `
+        <div class="d-flex align-items-start mb-2">
+            <i class="bi ${PICKER_ICONS[r.status] || PICKER_ICONS.error} me-2 mt-1"></i>
+            <div>
+                <div>${escapeHtml(pickerCourseNames[r.course_id] || r.course_id)}</div>
+                <div class="small text-muted">
+                    ${PICKER_LABELS[r.status] || r.status}${r.message ? ` — ${escapeHtml(r.message)}` : ''}
+                </div>
+            </div>
+        </div>
+    `).join('');
+    box.classList.remove('d-none');
+    document.getElementById('picker-send-btn').classList.add('d-none');
+}
+
+document.getElementById('picker-course-list').addEventListener('change', updateSendButton);
 
 // Load on page view
 loadAssignment();

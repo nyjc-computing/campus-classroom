@@ -110,17 +110,25 @@ Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 | `classroom.student-submissions.students.readonly` | Teacher: review submissions (#15). PRD's "classroom.coursework.students.readonly" is a noncanonical alias of this — request the canonical name only |
 | `classroom.rosters.readonly` | Teacher roster verification |
 
+Plus `userinfo.email` / `userinfo.profile` for the identity match.
+
+Requested **incrementally at first use** (feature scopes,
+`CLASSROOM_SCOPES_SEND`, never at connect):
+
+| Scope | For |
+|---|---|
+| `classroom.coursework.students` | `courseWork.create`/`.patch` — Send-to-Classroom drafts + Link Material (#10; PRD §6.4 defers it to feedback release #16, but the write scope is already needed here). The MVP `classroom.course-work.readonly` is listing-only |
+
 Scope names come from the GCP **Data access** list (canonical), not the PRD
 table — Google rejects unknown/noncanonical scope strings outright at the
 authorize URL ("Some requested scopes were invalid").
 
-Plus `userinfo.email` / `userinfo.profile` for the identity match.
-
 **Deliberately NOT requested** (post-MVP, per issue #9):
-`classroom.courses` (grade passback — the *readonly* variant IS requested),
+`classroom.courses` (course-level management / grade passback — the
+*readonly* variant IS requested),
 `drive.readonly` (Drive shortcuts),
-`classroom.push-notifications` and `classroom.coursework.students`
-(feedback release — #16 adds them via the incremental path).
+`classroom.push-notifications`
+(feedback release — #16 adds it via the incremental path).
 
 ## 5. Routes added
 
