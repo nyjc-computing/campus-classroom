@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Assignment unavailable{% endblock %}
+
+{% block content %}
+<div class="container-md mt-5">
+    <div class="card mx-auto" style="max-width: 34rem;">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-lock-fill display-5 text-muted mb-3"></i>
+            <h3 class="mb-3">This assignment is not shared with you</h3>
+            <p class="text-muted mb-4">
+                Assignment content is only visible to its owner and to
+                students it has been assigned to in Google Classroom.
+                If you expected access, sign in with the account your
+                class uses, or ask your teacher for help.
+            </p>
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="bi bi-house-door me-1"></i>Go to homepage
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
