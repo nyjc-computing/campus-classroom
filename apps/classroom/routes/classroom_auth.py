@@ -25,10 +25,11 @@ def _is_safe_redirect(target: str) -> bool:
     return target.startswith("/") and not target.startswith("//")
 
 
-def _requested_scopes() -> tuple[str, ...]:
-    """MVP Classroom scopes + identity scopes (always include the latter:
-    the email match needs userinfo)."""
-    return cauth.GOOGLE_IDENTITY_SCOPES + cauth.CLASSROOM_SCOPES_MVP
+def _allowlisted_scopes() -> set[str]:
+    """Scopes the `?scopes=` narrowing parameter may request: the MVP set
+    plus feature scopes (issue #10 Send-to-Classroom grants the courses
+    write scope incrementally; the default connect request stays MVP)."""
+    return set(cauth.CLASSROOM_SCOPES_MVP) | set(cauth.CLASSROOM_SCOPES_SEND)
 
 
 def register_routes(app: flask.Flask, login_manager):
@@ -110,9 +111,9 @@ def register_routes(app: flask.Flask, login_manager):
         previously-missing subset for incremental approval."""
         scopes_param = flask.request.args.get("scopes", "")
         if scopes_param:
-            known = set(cauth.CLASSROOM_SCOPES_MVP)
+            allowed = _allowlisted_scopes()
             scopes = tuple(
-                s for s in scopes_param.replace(",", " ").split() if s in known
+                s for s in scopes_param.replace(",", " ").split() if s in allowed
             ) or cauth.CLASSROOM_SCOPES_MVP
         else:
             scopes = cauth.CLASSROOM_SCOPES_MVP

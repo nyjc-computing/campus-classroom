@@ -57,10 +57,9 @@ GOOGLE_IDENTITY_SCOPES = (
 # courses.readonly is required for courses.list() (course pickers, the
 # /classroom live check) despite not being in PRD §6.4's table — that
 # table's post-MVP "classroom.courses" is the read-write scope.
-# Deliberately excluded (post-MVP, do NOT request):
-#   classroom.courses (write: grade passback), drive.readonly (Drive
-#   shortcuts), classroom.push-notifications + classroom.coursework.students
-#   (feedback release, session #16 — request incrementally when that lands).
+# Still excluded (do NOT request): drive.readonly (Drive shortcuts),
+# classroom.push-notifications (feedback release, session #16 — request
+# incrementally when that lands).
 CLASSROOM_SCOPES_MVP = (
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.addons.teacher",
@@ -71,6 +70,21 @@ CLASSROOM_SCOPES_MVP = (
     "https://www.googleapis.com/auth/classroom.rosters.readonly",
 )
 
+# classroom.coursework.students (write) is needed by issue #10's
+# Send-to-Classroom flow: courses.courseWork.create / .patch (draft
+# CourseWork, Link Material) require it per the Classroom discovery doc —
+# the MVP classroom.course-work.readonly is listing-only. PRD §6.4 defers
+# it to post-MVP (feedback release needs it too, session #16), but
+# CourseWork creation comes first, so it is a FEATURE scope: never
+# requested at connect, demanded incrementally by the send flow via
+# with_classroom_session(required_scopes=...) — a missing grant raises
+# MissingClassroomScopesError and the errorhandler walks the teacher
+# through one more consent screen. (The PRD §6.4 table's "classroom.courses"
+# is course-level management — not needed here.)
+CLASSROOM_SCOPES_SEND = (
+    "https://www.googleapis.com/auth/classroom.coursework.students",
+)
+
 # Google endpoints. Module-level so the test harness can stub them.
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -79,6 +93,9 @@ CLASSROOM_API_BASE = "https://classroom.googleapis.com"
 
 # Refresh the access token this many seconds before it actually expires.
 _EXPIRY_SKEW_SECONDS = 60
+
+# Public preview version for userProfiles.checkUserCapability (PRD §6.7).
+_CAPABILITY_PREVIEW_VERSION = "V1_20240930_PREVIEW"
 
 _HTTP_TIMEOUT = 30
 
@@ -442,6 +459,48 @@ class ClassroomClient:
             params["teacherMe"] = "true"
         data = self.request("GET", "v1/courses", params=params)
         return data.get("courses", [])
+
+    # -- Send-to-Classroom (issue #10, PRD §6.7) --
+
+    def check_user_capability(self, capability: str) -> bool:
+        """userProfiles.checkUserCapability (public preview).
+
+        Returns the `allowed` flag. An API failure means "cannot answer"
+        rather than "allowed", and per PRD §6.7 unavailability degrades to
+        the Link Material fallback — so errors return False, never raise.
+        """
+        try:
+            data = self.request(
+                "POST",
+                "v1/userProfiles/me:checkUserCapability",
+                params={"previewVersion": _CAPABILITY_PREVIEW_VERSION},
+                json={"capability": capability},
+            )
+        except ClassroomAPIError:
+            return False
+        return bool(data.get("allowed", False))
+
+    def coursework_create(self, course_id: str, body: dict) -> dict:
+        """Create a CourseWork post (courses.courseWork.create)."""
+        return self.request("POST", f"v1/courses/{course_id}/courseWork", json=body)
+
+    def coursework_patch(self, course_id: str, coursework_id: str, body: dict) -> dict:
+        """Update mutable CourseWork fields (courses.courseWork.patch)."""
+        return self.request(
+            "PATCH", f"v1/courses/{course_id}/courseWork/{coursework_id}", json=body
+        )
+
+    def addon_attachment_create(
+            self, course_id: str, coursework_id: str, body: dict,
+    ) -> dict:
+        """Create an add-on attachment under a CourseWork post
+        (courses.courseWork.addOnAttachments.create; addOnToken is optional
+        for partner-first creation)."""
+        return self.request(
+            "POST",
+            f"v1/courses/{course_id}/courseWork/{coursework_id}/addOnAttachments",
+            json=body,
+        )
 
 
 @contextmanager
