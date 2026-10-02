@@ -1,10 +1,11 @@
 # PRD: Campus Classroom - Assignment Platform
 
 **Status:** Draft
-**Version:** 1.1
-**Date:** 2025-02-12
+**Version:** 1.2
+**Date:** 2026-10-02
 
 ## Changelog
+- **v1.2** (2026-10-02): Corrected §6.4 scope names to Google's canonical set — `coursework.readonly` → `course-work.readonly` (hyphenated; unhyphenated name does not exist), dropped `coursework.students.readonly` (noncanonical alias of `student-submissions.students.readonly`), added `courses.readonly` (required for `courses.list()`). Found by Google rejecting the scopes at first real consent (issue #9); canonical source of truth is the GCP "Data access" scope list
 - **v1.1** (2025-02-12): Resolved question hierarchy UI (flat list for MVP, anticipate tree view if complexity grows)
 - **v1.0** (2025-02-12): Added grade passback implementation reference (API patterns for maxPoints, pointsEarned, assignedGrade)
 - **v0.9** (2025-02-11): Updated assignment creation flow to API-first with eligibility check (CREATE_ADD_ON_ATTACHMENT capability), Link Upgrade demoted to post-MVP fallback
@@ -236,20 +237,23 @@ Develop an assignment platform that integrates with Google Classroom as an Add-O
 
 **Classroom API Scopes:**
 
+Scope names below are Google's **canonical** names (per the GCP "Data access"
+list) — v1.2 corrects two names that Google rejects at the authorize URL.
+
 | Scope | Purpose | Required For |
 |-------|---------|--------------|
+| `https://www.googleapis.com/auth/classroom.courses.readonly` | List/view courses (courses.list — course pickers) | All users |
 | `https://www.googleapis.com/auth/classroom.addons.teacher` | Teacher iframe views, create attachments | Teachers |
 | `https://www.googleapis.com/auth/classroom.addons.student` | Student iframe views | Students |
-| `https://www.googleapis.com/auth/classroom.coursework.readonly` | Read assignment metadata | All users |
-| `https://www.googleapis.com/auth/classroom.coursework.students.readonly` | View course work and grades for students | Teachers |
+| `https://www.googleapis.com/auth/classroom.course-work.readonly` | Read assignment metadata (hyphenated: `course-work`, NOT `coursework` — the unhyphenated name does not exist) | All users |
 | `https://www.googleapis.com/auth/classroom.student-submissions.me.readonly` | View student's own submissions | Students |
-| `https://www.googleapis.com/auth/classroom.student-submissions.students.readonly` | View student submissions | Teachers |
+| `https://www.googleapis.com/auth/classroom.student-submissions.students.readonly` | View student submissions (canonical; `classroom.coursework.students.readonly` is a rejected noncanonical alias of this) | Teachers |
 | `https://www.googleapis.com/auth/classroom.rosters.readonly` | View course rosters (for teacher verification) | Teachers |
 | `https://www.googleapis.com/auth/classroom.push-notifications` | Register for Pub/Sub push notifications | Feedback release |
 | `https://www.googleapis.com/auth/classroom.coursework.students` | Modify student submissions (return assignment) | Feedback release |
 
 **Future Scopes (Post-MVP):**
-- `https://www.googleapis.com/auth/classroom.courses` - Grade passback, manage courses
+- `https://www.googleapis.com/auth/classroom.courses` - Grade passback, manage courses (read-**write** scope; the readonly variant above is already MVP)
 - `https://www.googleapis.com/auth/drive.readonly` - Drive shortcuts
 
 ### 6.5 Data Model (Draft)
@@ -471,7 +475,7 @@ To match teacher expectations set by Google Classroom, feedback is released to s
 
 **Required Scope:**
 - `https://www.googleapis.com/auth/classroom.push-notifications`
-- `https://www.googleapis.com/auth/classroom.coursework.students.readonly`
+- `https://www.googleapis.com/auth/classroom.student-submissions.students.readonly`
 
 **Registration Management:**
 - Registrations expire after **one week**
