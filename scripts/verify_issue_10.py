@@ -602,6 +602,9 @@ check("view page embeds the course picker modal",
       "classroomPickerModal" in html and "openClassroomPicker" in html)
 check("view page wires the send endpoint",
       "/classroom/send" in html)
+check("picker reveals the send button when the course list renders",
+      "picker-send-btn').classList.remove('d-none')" in html,
+      "renderCourseList must un-hide the send button (resetPicker hides it)")
 check("the alert() placeholder is gone", "linkToClassroom" not in html)
 
 # ---------------------------------------------------------------------------
