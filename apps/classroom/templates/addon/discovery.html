@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attachment Discovery - Campus Classroom</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container p-4" id="discovery-view">
+        <div class="text-center mb-4">
+            <h1 class="h5 fw-semibold mb-2">Assignments are posted from Campus Classroom</h1>
+            <p class="text-muted mb-0">
+                This add-on doesn't create assignments inside Google Classroom.
+                Post them from the platform and they appear in your classes
+                automatically.
+            </p>
+        </div>
+
+        <div class="border rounded p-3 mb-4 bg-light">
+            <ol class="mb-0 small">
+                <li class="mb-2">
+                    Open Campus Classroom in a new tab
+                    <span class="text-muted">(the button below).</span>
+                </li>
+                <li class="mb-2">
+                    Choose an assignment and select
+                    <strong>Send to Google Classroom</strong>.
+                </li>
+                <li class="mb-0">
+                    Pick your classes — the assignment posts to Classroom with
+                    its interactive attachment attached.
+                </li>
+            </ol>
+        </div>
+
+        <div class="text-center">
+            {% if g.user %}
+            <a href="/dashboard" target="_blank" rel="noopener" class="btn btn-primary">
+                Open Campus Classroom
+            </a>
+            {% else %}
+            <a href="/sign-in" target="_blank" rel="noopener" class="btn btn-primary">
+                Sign in to Campus Classroom
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Notify parent Classroom of content height (postMessage)
+        function resizeIframe() {
+            const height = document.body.scrollHeight;
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    action: 'resize',
+                    height: height
+                }, '*');
+            }
+        }
+
+        window.addEventListener('resize', resizeIframe);
+        document.addEventListener('DOMContentLoaded', resizeIframe);
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</body>
+</html>
