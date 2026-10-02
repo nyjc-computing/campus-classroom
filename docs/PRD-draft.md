@@ -1,10 +1,11 @@
 # PRD: Campus Classroom - Assignment Platform
 
 **Status:** Draft
-**Version:** 1.2
+**Version:** 1.3
 **Date:** 2026-10-02
 
 ## Changelog
+- **v1.3** (2026-10-02): Authorization model made explicit (§6.9): assignments are editable only by their owner (group ownership post-MVP), assignment content is never visible to the public (the `/a/` share page becomes gated — Campus sign-in plus, for students, enrollment in a linked Classroom course; this deliberately supersedes the anonymous link-preview behavior shipped via issue #24), attempting/submitting requires enrollment in a Classroom course the assignment was assigned to, and logged-in students see only assignments assigned to them. Found during the issue #24 review: none of these rules are enforced today (no ownership/visibility checks on Campus API assignment routes; the share page renders anonymously)
 - **v1.2** (2026-10-02): Corrected §6.4 scope names to Google's canonical set — `coursework.readonly` → `course-work.readonly` (hyphenated; unhyphenated name does not exist), dropped `coursework.students.readonly` (noncanonical alias of `student-submissions.students.readonly`), added `courses.readonly` (required for `courses.list()`). Found by Google rejecting the scopes at first real consent (issue #9); canonical source of truth is the GCP "Data access" scope list
 - **v1.1** (2025-02-12): Resolved question hierarchy UI (flat list for MVP, anticipate tree view if complexity grows)
 - **v1.0** (2025-02-12): Added grade passback implementation reference (API patterns for maxPoints, pointsEarned, assignedGrade)
@@ -175,6 +176,9 @@ Develop an assignment platform that integrates with Google Classroom as an Add-O
 - [ ] All API calls must use OAuth 2.0 with appropriate scopes
 - [ ] Student data must be isolated by assignment/submission
 - [ ] Access validation via Campus API
+- [ ] Assignments are editable only by their owner (§6.9); group ownership is post-MVP
+- [ ] Assignment content is never served to anonymous visitors (§6.9)
+- [ ] Attempting/submitting requires enrollment in a Classroom course the assignment was assigned to (§6.9, §6.11)
 
 ### 5.3 Compatibility
 - [ ] Platform must work in iframe context (no X-Frame-Options issues)
@@ -343,6 +347,7 @@ Note: Deadlines NOT enforced by campus-classroom (Google Classroom concern only)
      - Create CourseWork assignment with Link Material pointing to assignment URL
      - Store `course_id`, `coursework_id` in `classroom_links` (no `attachment_id`)
      - Note: Students will open content in new tab instead of iframe
+     - The share page is gated, not public (§6.9): after Campus sign-in, students see content only if enrolled in this course
 6. Teacher can edit campus-classroom assignment until Classroom assignment is posted
 7. Once posted in Classroom, assignment is "locked" for editing (future: configurable)
 
@@ -411,7 +416,7 @@ URL Patterns:
 | `/dashboard` | Dashboard | All | None | User's assignment overview | MVP |
 | `/addon/discovery` | Attachment Discovery | Teacher | `courseId`, `itemId`, `addOnToken` | Select/create assignment to attach to Classroom | Post-MVP |
 | `/addon/link-upgrade` | Link Upgrade | Teacher | `courseId`, `itemId`, `addOnToken`, `urlToUpgrade` | Upgrade pasted link to add-on attachment | Post-MVP |
-| `/a/{assignment_id}` | Assignment Share | All | None | Shareable URL for assignments (used in Link Material fallback) | MVP |
+| `/a/{assignment_id}` | Assignment Share | Signed-in users | None | Share URL for the Link Material fallback — gated per §6.9, never public | MVP |
 
 **Iframe Specifications:**
 - Responsive design supporting 1366x768 (low-end) to 4K displays
@@ -420,7 +425,16 @@ URL Patterns:
 
 ### 6.9 Authorization Model
 
-**Campus API** provides authentication (user identity) but **does not provide role-based authorization**. The Campus User model contains only: `id`, `email`, `name`, `activated_at`.
+**Assignment visibility and ownership (platform rules):**
+
+1. **Owner-only editing.** An assignment may be edited or deleted only by its owner (`created_by`). Group ownership (co-teachers) is a future feature; until then, no other principal may mutate an assignment — not even a co-teacher of the same course.
+2. **Never public.** Assignment content is not visible to anonymous visitors. If it were, a student could forward the link and a non-enrolled person could read the assignment or attempt it on their behalf. The `/a/{assignment_id}` share page (Link Material fallback, §6.7) therefore requires Campus sign-in, and for students additionally enrollment in at least one Classroom course in the assignment's `classroom_links`. Google's anonymous link crawler sees the gated state, not the content — a deliberate trade-off that supersedes the anonymous link-preview behavior shipped via issue #24.
+3. **Classroom-scoped attempt/submit.** Only students enrolled in a Classroom course to which the assignment was assigned (a course in its `classroom_links`) may attempt and submit it. Enrollment is checked against the signed-in student's Google-linked Classroom courses.
+4. **Assigned-only listing for students.** A logged-in student's assignment list contains only assignments assigned to them via their courses — never an enumerable index of all assignments.
+
+Teachers see their own assignments (`created_by = me`) and, for review, submissions from courses they teach (§6.11).
+
+**Campus API** provides authentication (user identity) but **does not provide role-based authorization**. The Campus User model contains only: `id`, `email`, `name`, `activated_at`. The rules above must therefore be enforced by this platform's route layer (with owner checks on Campus API assignment mutations as defense in depth).
 
 **Authorization (teacher vs student roles) is determined via Google Classroom API:**
 
