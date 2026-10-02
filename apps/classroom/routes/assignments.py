@@ -40,20 +40,21 @@ def register_routes(app: flask.Flask, login_manager):
     @app.get("/api/v1/assignments")
     @login_manager.login_required
     def list_assignments(**_):
-        """List assignments, optionally filtered by teacher.
+        """List the current user's assignments.
 
-        Query parameters:
-            - created_by: Filter by teacher (defaults to current user)
+        Always scoped to the signed-in user (PRD §6.9): a caller may not
+        enumerate another user's assignments by passing a created_by
+        filter. Students see only assignments assigned to them once the
+        enrollment listing lands (#28); until then their list is empty.
 
         Returns:
             JSON array of assignments
         """
         user_id = flask.g.user.id
         campus = flask.current_app.campus
-        created_by = flask.request.args.get("created_by", user_id)
 
         with campus.with_user_session() as client:
-            assignments = client.api.assignments.list(created_by=created_by)
+            assignments = client.api.assignments.list(created_by=user_id)
 
         return flask.jsonify([a.to_resource() for a in assignments])
 
@@ -96,8 +97,11 @@ def register_routes(app: flask.Flask, login_manager):
     def api_get_assignment(assignment_id: str, **_):
         """Get an assignment by ID.
 
+        Owner-only (PRD §6.9 rule 1). A non-owner gets 404 so the
+        assignment's existence is not revealed.
+
         Returns:
-            Assignment as JSON, or 404 if not found
+            Assignment as JSON, or 404 if not found or not owned
         """
         user_id = flask.g.user.id
         campus = flask.current_app.campus
@@ -108,6 +112,9 @@ def register_routes(app: flask.Flask, login_manager):
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
                 raise
+
+        if str(getattr(assignment, "created_by", "")) != str(user_id):
+            return flask.jsonify({"error": "Assignment not found"}), 404
 
         return flask.jsonify(assignment.to_resource())
 

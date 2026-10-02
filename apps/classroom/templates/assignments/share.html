@@ -4,8 +4,8 @@
 
 {% block content %}
 {# Render-only shareable assignment page (PRD §6.9, /a/{assignment_id}).
-   Opened by students from a Classroom Link Material, so it must stay
-   readable without a Campus session and exposes no student data. #}
+   Gated per PRD v1.3: the route only renders for the assignment's owner
+   (assigned-student rendering lands with #28). Exposes no student data. #}
 <div class="container-md mt-4">
     <div class="card mb-4">
         <div class="card-body">

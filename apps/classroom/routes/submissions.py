@@ -21,12 +21,18 @@ def register_routes(app: flask.Flask, login_manager):
     @app.get("/api/v1/submissions")
     @login_manager.login_required
     def list_submissions(**_):
-        """List submissions, optionally filtered.
+        """List submissions visible to the current user.
+
+        Access rules (PRD §6.9): a user sees their own submissions, or —
+        when filtering by assignment_id — the submissions of an
+        assignment they own (teacher review). Requesting another
+        student's submissions answers 404 without revealing data.
 
         Query parameters:
-            - assignment_id: Filter by assignment
-            - student_id: Filter by student
-            - course_id: Filter by Google Classroom course
+            - assignment_id: Filter by assignment (must be owned by the caller)
+            - student_id: Filter by student (must be the caller)
+            - course_id: Filter by Google Classroom course (combined with
+              the default own-submissions scope)
 
         Returns:
             JSON array of submissions
@@ -37,7 +43,22 @@ def register_routes(app: flask.Flask, login_manager):
         student_id = flask.request.args.get("student_id")
         course_id = flask.request.args.get("course_id")
 
+        if student_id and student_id != user_id:
+            return flask.jsonify({"error": "Submission not found"}), 404
+        if not student_id and not assignment_id:
+            student_id = user_id
+
         with campus.with_user_session() as client:
+            if assignment_id:
+                try:
+                    assignment = client.api.assignments[assignment_id].get()
+                except Exception as e:
+                    if "not found" in str(e).lower():
+                        return flask.jsonify({"error": "Assignment not found"}), 404
+                    raise
+                if str(getattr(assignment, "created_by", "")) != str(user_id):
+                    return flask.jsonify({"error": "Assignment not found"}), 404
+
             submissions = client.api.submissions.list(
                 assignment_id=assignment_id,
                 student_id=student_id,
@@ -87,8 +108,12 @@ def register_routes(app: flask.Flask, login_manager):
     def api_get_submission(submission_id: str, **_):
         """Get a submission by ID.
 
+        Visible to the submission's student and to the owner of the
+        assignment it belongs to (teacher review, PRD §6.9). Anyone else
+        gets 404 so the submission's existence is not revealed.
+
         Returns:
-            Submission as JSON, or 404 if not found
+            Submission as JSON, or 404 if not found or not visible
         """
         user_id = flask.g.user.id
         campus = flask.current_app.campus
@@ -100,9 +125,15 @@ def register_routes(app: flask.Flask, login_manager):
                     return flask.jsonify({"error": "Submission not found"}), 404
                 raise
 
-        # Check access: only the student or a teacher can view
-        # For MVP, we allow any authenticated user to view
-        # In production, add proper authorization checks
+            if str(getattr(submission, "student_id", "")) != str(user_id):
+                try:
+                    assignment = client.api.assignments[submission.assignment_id].get()
+                except Exception as e:
+                    if "not found" in str(e).lower():
+                        return flask.jsonify({"error": "Submission not found"}), 404
+                    raise
+                if str(getattr(assignment, "created_by", "")) != str(user_id):
+                    return flask.jsonify({"error": "Submission not found"}), 404
 
         return flask.jsonify(submission.to_resource())
 
@@ -111,12 +142,24 @@ def register_routes(app: flask.Flask, login_manager):
     def api_list_submissions_by_assignment(assignment_id: str, **_):
         """List all submissions for an assignment.
 
+        Assignment-owner only (teacher review, PRD §6.9); anyone else
+        gets 404 without revealing the submissions.
+
         Returns:
             JSON array of submissions
         """
         user_id = flask.g.user.id
         campus = flask.current_app.campus
         with campus.with_user_session() as client:
+            try:
+                assignment = client.api.assignments[assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Assignment not found"}), 404
+                raise
+            if str(getattr(assignment, "created_by", "")) != str(user_id):
+                return flask.jsonify({"error": "Assignment not found"}), 404
+
             submissions = client.api.submissions.by_assignment(assignment_id)
 
         return flask.jsonify([s.to_resource() for s in submissions])
@@ -125,6 +168,9 @@ def register_routes(app: flask.Flask, login_manager):
     @login_manager.login_required
     def api_list_submissions_by_student(student_id: str, **_):
         """List all submissions by a student.
+
+        Students may list only their own submissions (PRD §6.9); any
+        other student_id answers 404 without revealing data.
 
         Query parameters:
             - course_id: Optional filter by course
@@ -135,6 +181,9 @@ def register_routes(app: flask.Flask, login_manager):
         user_id = flask.g.user.id
         campus = flask.current_app.campus
         course_id = flask.request.args.get("course_id")
+
+        if student_id != user_id:
+            return flask.jsonify({"error": "Submission not found"}), 404
 
         with campus.with_user_session() as client:
             if course_id:
