@@ -261,8 +261,13 @@ def fake_user_session(self):
     yield FAKE_CAMPUS
 
 
+APP_SESSION_OK = True  # toggled to simulate deployments without the grant
+
+
 @contextmanager
 def fake_app_session(self):
+    if not APP_SESSION_OK:
+        raise RuntimeError("campus auth: no client_credentials grant")
     yield FAKE_CAMPUS
 
 
@@ -561,6 +566,24 @@ check("share page sends no X-Frame-Options header",
       str(dict(resp.headers)))
 resp = client_public.get("/a/does-not-exist")
 check("unknown share id -> 404", resp.status_code == 404)
+
+# Dev-deployment reality: with_app_session has no client_credentials grant
+# there. The share page must fall back to the visitor's Campus session and
+# send anonymous visitors to sign-in instead of erroring.
+APP_SESSION_OK = False
+resp = client_public.get("/a/a_eligible")
+check("app-scope outage: anonymous share visit redirects to sign-in",
+      resp.status_code == 302
+      and resp.headers["Location"].endswith("/sign-in"),
+      f"{resp.status_code} {resp.headers.get('Location')}")
+client_signed_in = app.test_client()
+seed_user(client_signed_in)
+resp = client_signed_in.get("/a/a_eligible")
+check("app-scope outage: signed-in visitor still sees the share page",
+      resp.status_code == 200
+      and "Verify me" in resp.get_data(as_text=True),
+      str(resp.status_code))
+APP_SESSION_OK = True
 
 # ---------------------------------------------------------------------------
 # 9. view.html renders the picker; the alert stub is gone

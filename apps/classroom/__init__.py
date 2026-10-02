@@ -111,15 +111,36 @@ def create_app():
     # no editing, no student data).
     @app.get("/a/<assignment_id>")
     def assignment_share(assignment_id: str):
-        """Render-only assignment page for the Link Material fallback."""
+        """Render-only assignment page for the Link Material fallback.
+
+        Primary read path is the app-scoped Campus session; the dev auth
+        deployment has no client_credentials grant yet (campus-api-python's
+        with_app_session 404s there), so reads fall back to the visitor's
+        own Campus session — anonymous visitors are sent to sign-in. When
+        Campus ships client_credentials the anonymous path starts working
+        with no code change.
+        """
         campus = flask.current_app.campus
+        assignment = None
         try:
             with campus.with_app_session() as client:
                 assignment = client.api.assignments[assignment_id].get()
         except Exception as e:
             if "not found" in str(e).lower():
                 flask.abort(404)
-            raise
+            # App scope unavailable on this deployment; try user scope.
+
+        if assignment is None:
+            if getattr(flask.g, "user", None) is None:
+                return flask.redirect(flask.url_for("sign_in"))
+            try:
+                with campus.with_user_session() as client:
+                    assignment = client.api.assignments[assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    flask.abort(404)
+                raise
+
         return flask.render_template(
             "assignments/share.html",
             assignment=assignment,
