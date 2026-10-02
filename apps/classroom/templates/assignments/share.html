@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}{{ assignment.title }}{% endblock %}
+
+{% block content %}
+{# Render-only shareable assignment page (PRD §6.9, /a/{assignment_id}).
+   Opened by students from a Classroom Link Material, so it must stay
+   readable without a Campus session and exposes no student data. #}
+<div class="container-md mt-4">
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2>{{ assignment.title }}</h2>
+            {% if assignment.description %}
+            <p class="text-muted">{{ assignment.description }}</p>
+            {% endif %}
+
+            <hr>
+
+            <h5 class="mb-3">Questions ({{ (assignment.questions or []) | length }})</h5>
+
+            <div class="questions-list mb-4">
+                {% for q in assignment.questions or [] %}
+                <div class="question-item mb-3 p-3">
+                    <strong>{{ q.id }}</strong>
+                    {% if q.prompt %}
+                    <p class="text-muted small mb-2">{{ q.prompt }}</p>
+                    {% endif %}
+                    <p class="mb-0">{{ q.question }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <p class="text-center text-muted small">
+        <i class="bi bi-mortarboard-fill me-1"></i>Powered by Campus Classroom
+    </p>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.question-item {
+    border-left: 2px solid var(--border-color);
+}
+</style>
+{% endblock %}

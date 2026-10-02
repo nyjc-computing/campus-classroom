@@ -63,6 +63,7 @@ def create_app():
     routes.submissions.register_routes(app, login_manager)
     routes.iframe.register_routes(app, login_manager)
     routes.classroom_auth.register_routes(app, login_manager)
+    routes.classroom_sync.register_routes(app, login_manager)
 
     # Register UI routes
     @app.get("/")
@@ -103,6 +104,26 @@ def create_app():
     def submission_view(submission_id: str, **_):
         """View submission page."""
         return flask.render_template("submissions/view.html", submission_id=submission_id)
+
+    # Shareable assignment page (PRD §6.9): the Link Material fallback posts
+    # this URL into Classroom, and students open it without a Campus session,
+    # so it is deliberately public and strictly render-only (no submissions,
+    # no editing, no student data).
+    @app.get("/a/<assignment_id>")
+    def assignment_share(assignment_id: str):
+        """Render-only assignment page for the Link Material fallback."""
+        campus = flask.current_app.campus
+        try:
+            with campus.with_app_session() as client:
+                assignment = client.api.assignments[assignment_id].get()
+        except Exception as e:
+            if "not found" in str(e).lower():
+                flask.abort(404)
+            raise
+        return flask.render_template(
+            "assignments/share.html",
+            assignment=assignment,
+        )
 
     # Test routes (for local development)
     @app.get("/test/iframe")
