@@ -453,10 +453,15 @@ class ClassroomClient:
         return resp.json() if resp.content else {}
 
     def courses_list(self, *, page_size: int = 30, teacher_only: bool = False) -> list[dict]:
-        """List the user's Classroom courses (courses.list)."""
+        """List the user's Classroom courses (courses.list).
+
+        `teacher_only` uses teacherId=me — courses.list has no `teacherMe`
+        parameter (Google rejects it with 400 INVALID_ARGUMENT; found by the
+        issue #10 smoke test against the real API).
+        """
         params: dict = {"pageSize": min(page_size, 100)}
         if teacher_only:
-            params["teacherMe"] = "true"
+            params["teacherId"] = "me"
         data = self.request("GET", "v1/courses", params=params)
         return data.get("courses", [])
 
