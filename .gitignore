@@ -179,3 +179,6 @@ Thumbs.db
 
 # Playwright auth state (contains session cookies/tokens)
 .playwright_auth_state.json
+
+# ZCode agent workspace state
+.zcode/
