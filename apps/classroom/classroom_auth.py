@@ -46,9 +46,17 @@ GOOGLE_IDENTITY_SCOPES = (
     "https://www.googleapis.com/auth/userinfo.profile",
 )
 
-# MVP Classroom scopes. courses.readonly is required for courses.list()
-# (course pickers, the /classroom live check) despite not being in PRD §6.4's
-# table — that table's post-MVP "classroom.courses" is the read-write scope.
+# MVP Classroom scopes. Scope names are taken from the GCP "Data access"
+# list (the canonical set), NOT the PRD §6.4 table — the PRD has two wrong
+# names, found by Google at first real consent (issue #9 smoke test):
+#   - "classroom.coursework.readonly" does not exist; the real scope is
+#     "classroom.course-work.readonly" (hyphenated).
+#   - "classroom.coursework.students.readonly" is a noncanonical alias of
+#     "classroom.student-submissions.students.readonly" (requesting both is
+#     rejected as redundant).
+# courses.readonly is required for courses.list() (course pickers, the
+# /classroom live check) despite not being in PRD §6.4's table — that
+# table's post-MVP "classroom.courses" is the read-write scope.
 # Deliberately excluded (post-MVP, do NOT request):
 #   classroom.courses (write: grade passback), drive.readonly (Drive
 #   shortcuts), classroom.push-notifications + classroom.coursework.students
@@ -57,8 +65,7 @@ CLASSROOM_SCOPES_MVP = (
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.addons.teacher",
     "https://www.googleapis.com/auth/classroom.addons.student",
-    "https://www.googleapis.com/auth/classroom.coursework.readonly",
-    "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+    "https://www.googleapis.com/auth/classroom.course-work.readonly",
     "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
     "https://www.googleapis.com/auth/classroom.student-submissions.students.readonly",
     "https://www.googleapis.com/auth/classroom.rosters.readonly",
