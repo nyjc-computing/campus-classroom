@@ -102,6 +102,7 @@ Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 
 | Scope | For |
 |---|---|
+| `classroom.courses.readonly` | `courses.list()` — course pickers (#10), `/classroom` live check. Not in PRD §6.4's table, but its post-MVP "classroom.courses" entry is the read-write scope; the readonly one is mandatory for any listing call |
 | `classroom.addons.teacher` | Teacher iframe views, attachment creation (#10, #13) |
 | `classroom.addons.student` | Student iframe views (#14) |
 | `classroom.coursework.readonly` | Read assignment metadata |
@@ -113,7 +114,8 @@ Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 Plus `userinfo.email` / `userinfo.profile` for the identity match.
 
 **Deliberately NOT requested** (post-MVP, per issue #9):
-`classroom.courses` (grade passback), `drive.readonly` (Drive shortcuts),
+`classroom.courses` (grade passback — the *readonly* variant IS requested),
+`drive.readonly` (Drive shortcuts),
 `classroom.push-notifications` and `classroom.coursework.students`
 (feedback release — #16 adds them via the incremental path).
 

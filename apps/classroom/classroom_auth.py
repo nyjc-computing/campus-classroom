@@ -46,11 +46,15 @@ GOOGLE_IDENTITY_SCOPES = (
     "https://www.googleapis.com/auth/userinfo.profile",
 )
 
-# MVP Classroom scopes. Deliberately excluded (post-MVP, do NOT request):
-#   classroom.courses (grade passback), drive.readonly (Drive shortcuts),
-#   classroom.push-notifications + classroom.coursework.students (feedback
-#   release, session #16 — request incrementally when that session lands).
+# MVP Classroom scopes. courses.readonly is required for courses.list()
+# (course pickers, the /classroom live check) despite not being in PRD §6.4's
+# table — that table's post-MVP "classroom.courses" is the read-write scope.
+# Deliberately excluded (post-MVP, do NOT request):
+#   classroom.courses (write: grade passback), drive.readonly (Drive
+#   shortcuts), classroom.push-notifications + classroom.coursework.students
+#   (feedback release, session #16 — request incrementally when that lands).
 CLASSROOM_SCOPES_MVP = (
+    "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.addons.teacher",
     "https://www.googleapis.com/auth/classroom.addons.student",
     "https://www.googleapis.com/auth/classroom.coursework.readonly",
