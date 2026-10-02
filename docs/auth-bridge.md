@@ -105,11 +105,14 @@ Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 | `classroom.courses.readonly` | `courses.list()` — course pickers (#10), `/classroom` live check. Not in PRD §6.4's table, but its post-MVP "classroom.courses" entry is the read-write scope; the readonly one is mandatory for any listing call |
 | `classroom.addons.teacher` | Teacher iframe views, attachment creation (#10, #13) |
 | `classroom.addons.student` | Student iframe views (#14) |
-| `classroom.coursework.readonly` | Read assignment metadata |
-| `classroom.coursework.students.readonly` | Teacher: view coursework/grades (#15) |
+| `classroom.course-work.readonly` | Read assignment metadata (PRD's "classroom.coursework.readonly" — the unhyphenated name doesn't exist; found at first real consent) |
 | `classroom.student-submissions.me.readonly` | Student: own submissions (#14) |
-| `classroom.student-submissions.students.readonly` | Teacher: review submissions (#15) |
+| `classroom.student-submissions.students.readonly` | Teacher: review submissions (#15). PRD's "classroom.coursework.students.readonly" is a noncanonical alias of this — request the canonical name only |
 | `classroom.rosters.readonly` | Teacher roster verification |
+
+Scope names come from the GCP **Data access** list (canonical), not the PRD
+table — Google rejects unknown/noncanonical scope strings outright at the
+authorize URL ("Some requested scopes were invalid").
 
 Plus `userinfo.email` / `userinfo.profile` for the identity match.
 
