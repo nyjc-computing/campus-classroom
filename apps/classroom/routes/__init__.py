@@ -7,7 +7,8 @@ campus-classroom does not have its own database.
 """
 
 from . import assignments
+from . import classroom_auth
 from . import iframe
 from . import submissions
 
-__all__ = ["assignments", "iframe", "submissions"]
+__all__ = ["assignments", "classroom_auth", "iframe", "submissions"]

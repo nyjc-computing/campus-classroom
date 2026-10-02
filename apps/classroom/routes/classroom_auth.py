@@ -1,0 +1,216 @@
+"""apps.classroom.routes.classroom_auth
+
+Routes for the Google Classroom auth bridge (issue #9).
+
+- GET  /classroom            connection status + acceptance demo (courses.list)
+- GET  /classroom/authorize  start (incremental) Google consent
+- GET  /classroom/callback   OAuth callback: identity check + token storage
+- POST /classroom/disconnect forget the stored Google credential
+
+An app-wide errorhandler converts ClassroomAuthError into a clean JSON
+response (API/addon paths) or a flash + redirect (browser paths), so a
+missing connection or missing scope never surfaces as a 500.
+"""
+
+import secrets
+
+import campus.common.utils.url as campus_url
+import flask
+
+from .. import classroom_auth as cauth
+
+
+def _is_safe_redirect(target: str) -> bool:
+    """Only allow relative URLs (same rule as flask_campus login)."""
+    return target.startswith("/") and not target.startswith("//")
+
+
+def _requested_scopes() -> tuple[str, ...]:
+    """MVP Classroom scopes + identity scopes (always include the latter:
+    the email match needs userinfo)."""
+    return cauth.GOOGLE_IDENTITY_SCOPES + cauth.CLASSROOM_SCOPES_MVP
+
+
+def register_routes(app: flask.Flask, login_manager):
+    """Register Classroom auth bridge routes with the Flask app."""
+
+    bp = flask.Blueprint("classroom_auth", __name__, url_prefix="/classroom")
+
+    @app.errorhandler(cauth.ClassroomAuthError)
+    def handle_classroom_auth_error(err: cauth.ClassroomAuthError):
+        """No auth-bridge failure may surface as a 500.
+
+        Browser paths get a redirect to the connection page (or straight to
+        the incremental consent screen when scopes are missing); API and
+        iframe paths get a machine-readable JSON error.
+        """
+        wants_json = (
+            flask.request.path.startswith(("/api/", "/addon/"))
+            or flask.request.accept_mimetypes.best == "application/json"
+        )
+        if wants_json:
+            payload: dict = {"error": {"code": err.code, "message": err.message}}
+            if isinstance(err, cauth.MissingClassroomScopesError):
+                payload["error"]["missing_scopes"] = err.missing
+                payload["error"]["authorize_url"] = flask.url_for(
+                    "classroom_auth.authorize",
+                    next=flask.request.url,
+                    scopes=" ".join(err.missing),
+                )
+            status = 403 if isinstance(
+                err, (cauth.MissingClassroomScopesError, cauth.NotConnectedError)
+            ) else 502
+            return flask.jsonify(payload), status
+
+        if isinstance(err, (cauth.NotConnectedError, cauth.MissingClassroomScopesError)):
+            flask.flash(err.message, "warning")
+            kwargs: dict = {"next": flask.request.full_path}
+            if isinstance(err, cauth.MissingClassroomScopesError):
+                kwargs["scopes"] = " ".join(err.missing)
+            return flask.redirect(flask.url_for("classroom_auth.authorize", **kwargs))
+
+        app.logger.error("Classroom auth error (%s): %s", err.code, err.message)
+        flask.flash(err.message, "danger")
+        return flask.redirect(flask.url_for("classroom_auth.connection"))
+
+    @bp.get("/")
+    @login_manager.login_required
+    def connection(**_):
+        """Connection status page + courses.list() acceptance demo."""
+        configured = cauth.is_configured()
+
+        creds = cauth.get_stored_credentials()
+        granted = creds.get("scopes", []) if creds else []
+        missing = cauth.missing_scopes(cauth.CLASSROOM_SCOPES_MVP, granted)
+
+        courses = None
+        courses_error = None
+        if creds and not missing:
+            try:
+                with cauth.with_classroom_session() as classroom:
+                    courses = classroom.courses_list()
+            except cauth.ClassroomAuthError as err:
+                courses_error = err.message
+
+        return flask.render_template(
+            "classroom/connection.html",
+            configured=configured,
+            connected=bool(creds),
+            connected_email=creds.get("email") if creds else None,
+            granted_scopes=granted,
+            missing_scopes=missing,
+            courses=courses,
+            courses_error=courses_error,
+        )
+
+    @bp.get("/authorize")
+    @login_manager.login_required
+    def authorize(**_):
+        """Start Google consent; `scopes` narrows the request to a
+        previously-missing subset for incremental approval."""
+        scopes_param = flask.request.args.get("scopes", "")
+        if scopes_param:
+            known = set(cauth.CLASSROOM_SCOPES_MVP)
+            scopes = tuple(
+                s for s in scopes_param.replace(",", " ").split() if s in known
+            ) or cauth.CLASSROOM_SCOPES_MVP
+        else:
+            scopes = cauth.CLASSROOM_SCOPES_MVP
+
+        next_url = flask.request.args.get("next") or flask.url_for(
+            "classroom_auth.connection"
+        )
+        if not _is_safe_redirect(next_url):
+            next_url = flask.url_for("classroom_auth.connection")
+
+        state = secrets.token_urlsafe(32)
+        try:
+            auth_url = cauth.build_authorization_url(
+                redirect_uri=campus_url.full_url_for("classroom_auth.callback"),
+                scopes=cauth.GOOGLE_IDENTITY_SCOPES + tuple(scopes),
+                state=state,
+                login_hint=cauth.campus_user_email(),
+            )
+        except cauth.ClassroomAuthError as err:
+            flask.flash(err.message, "danger")
+            return flask.redirect(flask.url_for("classroom_auth.connection"))
+
+        flask.session["classroom_oauth_state"] = state
+        flask.session["classroom_auth_next"] = next_url
+        return flask.redirect(auth_url)
+
+    @bp.get("/callback")
+    def callback():
+        """OAuth callback: verify state, exchange code, enforce identity."""
+        if flask.request.args.get("error"):
+            flask.flash(
+                "Google Classroom connection was cancelled — the app will "
+                "keep working without Classroom features.",
+                "warning",
+            )
+            return flask.redirect(flask.url_for("classroom_auth.connection"))
+
+        code = flask.request.args.get("code", "")
+        state = flask.request.args.get("state", "")
+        expected_state = flask.session.pop("classroom_oauth_state", None)
+        next_url = flask.session.pop("classroom_auth_next", None) or flask.url_for(
+            "classroom_auth.connection"
+        )
+        if not _is_safe_redirect(next_url):
+            next_url = flask.url_for("classroom_auth.connection")
+
+        if not code or not state or state != expected_state:
+            # Loud refusal: state mismatch is CSRF or a stale/out-of-band
+            # visit — do not proceed regardless of the code's validity.
+            app.logger.warning(
+                "Classroom OAuth callback rejected (state mismatch=%s)",
+                state != expected_state,
+            )
+            return (
+                flask.render_template(
+                    "classroom/callback_rejected.html",
+                    reason="This sign-in attempt could not be verified "
+                           "(invalid or expired state). Close this page and "
+                           "try connecting again.",
+                ),
+                400,
+            )
+
+        try:
+            creds = cauth.connect_from_callback(
+                code,
+                redirect_uri=campus_url.full_url_for("classroom_auth.callback"),
+            )
+        except cauth.IdentityMismatchError as err:
+            # Identity mapping enforcement: refuse loudly, store nothing.
+            app.logger.error(
+                "Classroom identity mismatch refused: campus=%s google=%s",
+                err.campus_email,
+                err.google_email,
+            )
+            return (
+                flask.render_template(
+                    "classroom/callback_rejected.html",
+                    reason=err.message,
+                ),
+                403,
+            )
+        except cauth.ClassroomAuthError as err:
+            app.logger.error("Classroom OAuth callback failed: %s", err.message)
+            flask.flash(err.message, "danger")
+            return flask.redirect(flask.url_for("classroom_auth.connection"))
+
+        flask.flash(
+            f"Google account {creds['email']} connected to Campus Classroom.",
+            "success",
+        )
+        return flask.redirect(next_url)
+
+    @bp.post("/disconnect")
+    @login_manager.login_required
+    def disconnect(**_):
+        cauth.clear_credentials()
+        flask.flash("Google Classroom disconnected.", "info")
+        return flask.redirect(flask.url_for("classroom_auth.connection"))
+
+    app.register_blueprint(bp)
