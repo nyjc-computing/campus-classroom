@@ -96,6 +96,7 @@ class StubClassroom(BaseHTTPRequestHandler):
     coursework_creates: list = []          # (course_id, body)
     attachment_creates: list = []          # (course_id, coursework_id, body)
     coursework_patches: list = []          # (course_id, coursework_id, body)
+    courses_queries: list = []             # query strings of GET /v1/courses
 
     def log_message(self, *args):
         pass
@@ -115,6 +116,7 @@ class StubClassroom(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlsplit(self.path).path == "/v1/courses":
+            self.courses_queries.append(urlsplit(self.path).query)
             self._send(COURSES_PAYLOAD)
         else:
             self._send({"error": {"code": 404, "message": "Not Found"}}, 404)
@@ -191,6 +193,7 @@ def reset_stub():
     StubClassroom.coursework_creates = []
     StubClassroom.attachment_creates = []
     StubClassroom.coursework_patches = []
+    StubClassroom.courses_queries = []
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +333,10 @@ check("courses endpoint lists the teacher's courses",
       [c["id"] for c in courses] == ["course_111", "course_222"]
       and courses[0]["name"] == "CS1101s",
       json.dumps(courses))
+check("picker filters by teacherId=me (no teacherMe param — Google 400s it)",
+      any("teacherId=me" in q and "teacherMe" not in q
+          for q in StubClassroom.courses_queries),
+      str(StubClassroom.courses_queries))
 
 # ---------------------------------------------------------------------------
 # 2. Eligible multi-class send: attachment path + GC-8 storage + lock
