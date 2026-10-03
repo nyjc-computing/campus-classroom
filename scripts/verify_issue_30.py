@@ -19,7 +19,7 @@ campus/Google account needed):
     at the profile integrations page. Legacy session-stored credentials are
     ignored (the seam no longer reads the Flask session).
 6.  Broker 403 + missing_scopes -> MissingClassroomScopesError with the
-    exact list, 403 JSON with authorize_url.
+    exact list, 403 JSON with the profile-page reconnect_url.
 7.  Broker 401 -> CampusSessionExpiredError: 401 JSON on API paths, redirect
     to /login on browser paths.
 8.  Broker 400 AUTH_INVALID_SCOPE -> BrokerConfigError (502 JSON, loud ERROR
@@ -33,7 +33,6 @@ campus/Google account needed):
 12. /classroom page: Connected state (email + scopes + courses) from the
     broker, Not-connected state with the profile-page CTA, and a clean
     error state when the broker is unreachable (no 500, no redirect loop).
-13. Legacy /classroom/authorize routes still work (retire lane intact).
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_30.py
 """
@@ -50,9 +49,6 @@ from urllib.parse import urlsplit
 # load_dotenv() does not override variables that are already set).
 os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-30-secret"
-os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-30-client-id")
-os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-30-client-secret")
-os.environ["WORKSPACE_DOMAIN"] = "nyjc.edu.sg"
 os.environ["CAMPUS_PROFILE_URL"] = "https://profile.example"
 os.environ["CLIENT_ID"] = "verify-issue-30-campus-client"
 os.environ["CLIENT_SECRET"] = "verify-issue-30-campus-secret"
@@ -487,8 +483,10 @@ check("broker 403 missing_scopes -> 403 JSON classroom_missing_scopes",
 check("missing scopes carried exactly",
       body["error"]["missing_scopes"] == [f"{SCOPE_BASE}classroom.rosters.readonly"],
       str(body["error"].get("missing_scopes")))
-check("JSON error carries the legacy re-consent authorize_url",
-      "/classroom/authorize" in body["error"].get("authorize_url", ""))
+check("JSON error carries the profile-page reconnect_url",
+      body["error"].get("reconnect_url")
+      == "https://profile.example/profile/integrations",
+      str(body["error"].get("reconnect_url")))
 
 # ---------------------------------------------------------------------------
 # 7. Broker 401 -> CampusSessionExpiredError (JSON 401 / browser re-login)
@@ -602,16 +600,6 @@ try:
           and "Could not check your Classroom connection" in html)
 finally:
     cauth._broker_url = saved_url
-
-# ---------------------------------------------------------------------------
-# 13. Legacy connect routes still work (retire lane intact)
-# ---------------------------------------------------------------------------
-StubCampus.reset("ok")
-reset_fake()
-resp = client.get("/classroom/authorize")
-loc = resp.headers.get("Location", "")
-check("legacy /classroom/authorize still redirects to Google consent",
-      resp.status_code == 302 and "accounts.google.com" in loc, loc)
 
 server.shutdown()
 print()

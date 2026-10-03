@@ -11,6 +11,7 @@ import campus_python
 import flask
 from campus import flask_campus
 
+from . import classroom_auth as cauth
 from . import routes
 
 # Load environment variables from .env file
@@ -96,7 +97,13 @@ def create_app():
     @login_manager.login_required
     def assignment_view(assignment_id: str, **_):
         """View/edit assignment page."""
-        return flask.render_template("assignments/view.html", assignment_id=assignment_id)
+        return flask.render_template(
+            "assignments/view.html",
+            assignment_id=assignment_id,
+            profile_integrations_url=(
+                f"{cauth.profile_integrations_url()}/profile/integrations"
+            ),
+        )
 
     # Submission UI routes
     @app.get("/submissions/<submission_id>")
