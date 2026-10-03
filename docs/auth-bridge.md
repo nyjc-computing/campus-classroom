@@ -16,11 +16,18 @@ Classroom API, and how the other add-on sessions (#10–#16) use it.
 > token storage) kept working through the transition and removed once the
 > broker path is proven (issue #30 "Retire" lane).
 >
-> Known transitional limit: the `google.classroom` integration's vault
-> SCOPES cap is the 7 MVP + userinfo pair, so the send flow's
-> `classroom.coursework.students` cannot be granted by ANY connect flow yet;
-> `with_classroom_session(required_scopes=_SEND_SCOPES)` fails its scope
-> gate until campus widens the cap (campus#733 Phase 1).
+> Scope reality (corrected 2026-10-03 after live verification): the dev
+> vault's SCOPES cap is WIDER than first recorded — the profile connect
+> grants 11 scopes (7 MVP + `coursework.students` + userinfo pair +
+> openid) — so **Send-to-Classroom works through the broker today**. The
+> seam still deliberately ASKS the broker only for the MVP∩required floor
+> (`_BROKER_ASKABLE`; asking beyond a deployment's cap is a 400
+> AUTH_INVALID_SCOPE) and enforces feature scopes locally against the
+> returned grant.
+>
+> Verified live 2026-10-03: profile connect → `/classroom` shows Connected
+> (all 11 scopes) + live `courses.list()` through the broker-released
+> token.
 >
 > Verify the swapped seam with `scripts/verify_issue_30.py`; the legacy
 > flow's remaining checks live in `scripts/verify_issue_9.py`.

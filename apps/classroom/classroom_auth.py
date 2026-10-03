@@ -88,12 +88,12 @@ CLASSROOM_SCOPES_MVP = (
 # MissingClassroomScopesError. (The PRD §6.4 table's "classroom.courses"
 # is course-level management — not needed here.)
 #
-# NOTE (issue #30): the scope is beyond the google.classroom integration's
-# vault SCOPES cap (the 7 MVP + userinfo pair at seed time), so asking the
-# broker for it is rejected outright and NO connect flow can grant it yet.
-# The send flow therefore fails its scope gate with
-# MissingClassroomScopesError until campus widens the vault cap and the
-# cap set below is widened to match.
+# NOTE (issue #30, corrected 2026-10-03 on live verification): the dev
+# vault's SCOPES cap turned out WIDER than first recorded — the profile
+# connect grants 11 scopes (7 MVP + coursework.students + userinfo pair +
+# openid) — so this scope IS grantable and the send flow works through the
+# broker. The seam still does not ASK the broker for it (see
+# _BROKER_ASKABLE below); it is enforced locally against the returned grant.
 CLASSROOM_SCOPES_SEND = (
     "https://www.googleapis.com/auth/classroom.coursework.students",
 )
@@ -123,12 +123,15 @@ _CREDENTIALS_KEY = "classroom_credentials"
 # the verify harness can retarget it at a stub.
 BROKER_PATH = "/auth/v1/broker/google/classroom/"
 
-# Scopes the broker may be asked for: the google.classroom integration's
-# vault SCOPES cap (7 MVP + userinfo pair at seed time). Asking beyond it
-# is a 400 AUTH_INVALID_SCOPE — a configuration bug, not a re-consent
-# situation — so caller requirements beyond the cap (CLASSROOM_SCOPES_SEND)
-# are checked locally against the returned grant instead. Widen this set
-# when campus widens the cap.
+# Scopes the broker may be ASKED for: deliberately the conservative set
+# (MVP + identity) even though the dev vault's observed cap is wider
+# (coursework.students + openid included, verified 2026-10-03). Asking
+# beyond a deployment's cap is a 400 AUTH_INVALID_SCOPE — a configuration
+# bug, not a re-consent situation — so only this floor is ever asked;
+# caller requirements beyond it (CLASSROOM_SCOPES_SEND) are enforced
+# locally against the returned grant, which the local scope gate does
+# just as correctly. Widen this set only if broker-authoritative
+# missing-scope 403s are wanted for the feature scopes.
 _BROKER_ASKABLE = frozenset(CLASSROOM_SCOPES_MVP) | frozenset(GOOGLE_IDENTITY_SCOPES)
 
 # campus-profile origins (the integrations/connect host). development is
@@ -200,8 +203,8 @@ class MissingClassroomScopesError(ClassroomAuthError):
     """The released credential lacks scopes the caller requires.
 
     `missing` scopes can be granted by reconnecting via the campus-profile
-    integrations page — except scopes beyond the integration's vault cap,
-    which no connect flow can grant until campus widens it.
+    integrations page (the dev vault's cap covers every scope this app
+    asks for — verified 2026-10-03).
     """
 
     code = "classroom_missing_scopes"
@@ -593,9 +596,9 @@ class ClassroomClient:
     def _ensure_token(self) -> None:
         """Release (or re-release) a broker token, then gate required scopes.
 
-        The broker is asked only for scopes within the integration's vault
-        cap (_BROKER_ASKABLE); any further requirement (feature scopes
-        beyond the cap) is checked locally against the returned grant.
+        The broker is asked only for the conservative floor
+        (_BROKER_ASKABLE, see the comment there); any further requirement
+        (feature scopes) is checked locally against the returned grant.
         """
         if (self._creds is not None
                 and time.time()
@@ -723,8 +726,8 @@ def with_classroom_session(
         NotConnectedError: user has not connected google.classroom via the
             campus-profile integrations page yet.
         MissingClassroomScopesError: the grant lacks `required_scopes`;
-            `err.missing` feeds the reconnect guidance. Scopes beyond the
-            integration's vault cap can currently never be granted.
+            `err.missing` feeds the reconnect guidance (reconnect via the
+            campus-profile integrations page).
 
     Pass `required_scopes=()` to skip the scope gate for calls that only
     need whatever was granted.

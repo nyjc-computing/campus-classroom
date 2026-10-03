@@ -532,10 +532,10 @@ StubCampus.reset("ok")
 reset_fake()
 resp = client.get("/api/_probe_send")
 body = resp.get_json()
-check("send probe: broker asked ONLY for the MVP subset (no cap-scope ask)",
+check("send probe: broker asked ONLY for the MVP subset (conservative ask)",
       StubCampus.bodies and StubCampus.bodies[0].get("min_scopes") == ALL_MVP,
       str(StubCampus.bodies))
-check("send probe: beyond-cap scope fails the local gate",
+check("send probe: unasked feature scope fails the local gate",
       resp.status_code == 403
       and body["error"]["code"] == "classroom_missing_scopes"
       and body["error"]["missing_scopes"] == list(cauth.CLASSROOM_SCOPES_SEND),
