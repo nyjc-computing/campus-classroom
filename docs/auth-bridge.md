@@ -1,7 +1,29 @@
-# Google Classroom Auth Bridge (issue #9)
+# Google Classroom Auth Bridge (issue #9; broker swap issue #30)
 
 How a Campus-authenticated user gets a Google credential that can call the
 Classroom API, and how the other add-on sessions (#10–#16) use it.
+
+> **2026-10-03 — the seam now runs on campus.auth's token broker (issue
+> #30).** `with_classroom_session()` POSTs
+> `{campus.auth}/auth/v1/broker/google/classroom/` with the user's campus
+> bearer and receives a live `google.classroom` access token (expiry +
+> scope, **never a refresh token**). Tokens live in memory until `expires_in`,
+> then the app just asks the broker again — campus refreshes server-side.
+> Nothing is persisted anywhere. Connect UX is the **campus-profile
+> integrations page** (one-time, per user; no existing tokens were migrated),
+> and `NotConnectedError` points there. Sections 1–4 below describe the
+> **legacy in-app flow** (`/classroom/authorize|callback` + Flask-session
+> token storage) kept working through the transition and removed once the
+> broker path is proven (issue #30 "Retire" lane).
+>
+> Known transitional limit: the `google.classroom` integration's vault
+> SCOPES cap is the 7 MVP + userinfo pair, so the send flow's
+> `classroom.coursework.students` cannot be granted by ANY connect flow yet;
+> `with_classroom_session(required_scopes=_SEND_SCOPES)` fails its scope
+> gate until campus widens the cap (campus#733 Phase 1).
+>
+> Verify the swapped seam with `scripts/verify_issue_30.py`; the legacy
+> flow's remaining checks live in `scripts/verify_issue_9.py`.
 
 **TL;DR for other sessions**
 
@@ -159,9 +181,12 @@ authorize URL ("Some requested scopes were invalid").
 
 ## 7. Tests
 
-`scripts/verify_issue_9.py` runs the whole bridge against a local stub of
-Google's OAuth + Classroom endpoints (no network, no real account):
-authorize-URL composition, happy-path callback + `courses.list()`, CSRF
-refusal, email-mismatch refusal, cancelled consent, missing-scope UX +
-incremental re-consent URL + JSON 403 shape, proactive/401-triggered token
-refresh, unconfigured-GOOGLE_* errors, disconnect. 50 checks.
+`scripts/verify_issue_30.py` (post-broker-swap, the authoritative seam
+check) runs the broker release against a local stub of campus.auth's broker
++ the Classroom API: bearer/min_scopes on the wire, nothing-persisted,
+campus-credential refresh, proactive + 401-triggered re-release, the full
+error mapping (404→NotConnected, 403 missing_scopes, 401→re-login,
+400→loud BrokerConfigError), the send-scope vault-cap gate, and the
+/classroom page states. `scripts/verify_issue_9.py` retains the LEGACY
+in-app flow checks (authorize-URL composition, CSRF refusal, email
+mismatch, cancelled consent, disconnect).

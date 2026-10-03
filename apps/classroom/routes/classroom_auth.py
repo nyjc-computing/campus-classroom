@@ -1,11 +1,15 @@
 """apps.classroom.routes.classroom_auth
 
-Routes for the Google Classroom auth bridge (issue #9).
+Routes for the Google Classroom auth bridge (issue #9; broker swap #30).
 
-- GET  /classroom            connection status + acceptance demo (courses.list)
-- GET  /classroom/authorize  start (incremental) Google consent
-- GET  /classroom/callback   OAuth callback: identity check + token storage
-- POST /classroom/disconnect forget the stored Google credential
+- GET  /classroom            connection status (broker-derived) + acceptance
+                             demo (courses.list)
+- GET  /classroom/authorize  LEGACY (retire lane): start (incremental) Google
+                             consent — the connect UX is the campus-profile
+                             integrations page now
+- GET  /classroom/callback   LEGACY: OAuth callback; its Flask-session token
+                             is no longer read by with_classroom_session()
+- POST /classroom/disconnect forget the LEGACY stored Google credential
 
 An app-wide errorhandler converts ClassroomAuthError into a clean JSON
 response (API/addon paths) or a flash + redirect (browser paths), so a
@@ -49,6 +53,18 @@ def register_routes(app: flask.Flask, login_manager):
             flask.request.path.startswith(("/api/", "/addon/"))
             or flask.request.accept_mimetypes.best == "application/json"
         )
+        if isinstance(err, cauth.CampusSessionExpiredError):
+            # The broker needs a live campus bearer; none can be obtained.
+            # Browser paths re-enter the campus OAuth flow, API paths get
+            # the machine-readable 401.
+            if wants_json:
+                return flask.jsonify(
+                    {"error": {"code": err.code, "message": err.message}}
+                ), 401
+            flask.flash(err.message, "warning")
+            return flask.redirect(
+                flask.url_for("auth.login", next=flask.request.path)
+            )
         if wants_json:
             payload: dict = {"error": {"code": err.code, "message": err.message}}
             if isinstance(err, cauth.MissingClassroomScopesError):
@@ -77,16 +93,37 @@ def register_routes(app: flask.Flask, login_manager):
     @bp.get("/")
     @login_manager.login_required
     def connection(**_):
-        """Connection status page + courses.list() acceptance demo."""
-        configured = cauth.is_configured()
+        """Connection status page + courses.list() acceptance demo.
 
-        creds = cauth.get_stored_credentials()
-        granted = creds.get("scopes", []) if creds else []
-        missing = cauth.missing_scopes(cauth.CLASSROOM_SCOPES_MVP, granted)
+        Status is broker-derived (issue #30): campus.auth is the source of
+        truth for the user's google.classroom grant, and nothing is read
+        from or written to the Flask session. The probe asks for the
+        connected grant without a minimum so the page can show exactly
+        what was granted; errors render as page states, never 500s.
+        """
+        connected: bool | None = None
+        connected_email = None
+        granted: list[str] = []
+        missing = list(cauth.CLASSROOM_SCOPES_MVP)
+        status_error = None
+        try:
+            creds = cauth.fetch_broker_credential()
+            connected = True
+            connected_email = creds["email"]
+            granted = creds["scopes"]
+            missing = cauth.missing_scopes(cauth.CLASSROOM_SCOPES_MVP, granted)
+        except cauth.NotConnectedError:
+            connected = False
+        except cauth.CampusSessionExpiredError:
+            # Re-login is the only remedy; let the errorhandler redirect
+            # browser paths straight into the campus OAuth flow.
+            raise
+        except cauth.ClassroomAuthError as err:
+            status_error = err.message
 
         courses = None
         courses_error = None
-        if creds and not missing:
+        if connected:
             try:
                 with cauth.with_classroom_session() as classroom:
                     courses = classroom.courses_list()
@@ -95,11 +132,14 @@ def register_routes(app: flask.Flask, login_manager):
 
         return flask.render_template(
             "classroom/connection.html",
-            configured=configured,
-            connected=bool(creds),
-            connected_email=creds.get("email") if creds else None,
+            connected=connected,
+            connected_email=connected_email,
             granted_scopes=granted,
             missing_scopes=missing,
+            status_error=status_error,
+            profile_integrations_url=(
+                f"{cauth.profile_integrations_url()}/profile/integrations"
+            ),
             courses=courses,
             courses_error=courses_error,
         )

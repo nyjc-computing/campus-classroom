@@ -33,7 +33,6 @@ import json
 import os
 import re
 import threading
-import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -47,14 +46,46 @@ os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-10-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-10-client-secret")
 os.environ["WORKSPACE_DOMAIN"] = "nyjc.edu.sg"
 
-import flask  # noqa: E402
-
 import campus_python  # noqa: E402
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
+import flask  # noqa: E402
+import requests  # noqa: E402
+import requests.adapters  # noqa: E402
 from campus.model import Assignment, ClassroomLink  # noqa: E402
+from urllib3.util.retry import Retry  # noqa: E402
 
 from apps.classroom import classroom_auth as cauth  # noqa: E402
 from apps.classroom import create_app  # noqa: E402
+
+# One pooled, retrying session for every HTTP call the seam makes: fresh
+# loopback connections intermittently abort on this dev box (WinError
+# 10053, seen on the pre-#30 harness too), and keep-alive both dodges
+# that and is far faster. The stub handlers below run HTTP/1.1 to match.
+_shared_http = requests.Session()
+_shared_http.mount("http://", requests.adapters.HTTPAdapter(
+    max_retries=Retry(total=3, backoff_factor=0.05), pool_maxsize=20))
+_shared_http.mount("https://", requests.adapters.HTTPAdapter(
+    max_retries=Retry(total=3, backoff_factor=0.05), pool_maxsize=20))
+
+
+class _PooledRequests:
+    """Drop-in for the requests-module surface classroom_auth uses."""
+
+    def get(self, *args, **kwargs):
+        return _shared_http.get(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        return _shared_http.post(*args, **kwargs)
+
+    def request(self, *args, **kwargs):
+        return _shared_http.request(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # module attributes the seam reads (e.g. RequestException)
+        return getattr(requests, name)
+
+
+cauth.requests = _PooledRequests()
 
 CAMPUS_EMAIL = "teacher@nyjc.edu.sg"
 OTHER_EMAIL = "other@nyjc.edu.sg"
@@ -85,7 +116,9 @@ def check(name, cond, detail=""):
 # Stub Google Classroom REST API (scriptable per-scenario behaviour)
 # ---------------------------------------------------------------------------
 class StubClassroom(BaseHTTPRequestHandler):
+
     """Minimal Classroom REST endpoints with scriptable outcomes."""
+    protocol_version = "HTTP/1.1"
 
     capability_allowed: bool = True
     capability_errors: bool = False        # preview API unavailable -> 403
@@ -124,6 +157,9 @@ class StubClassroom(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlsplit(self.path).path
         if path.endswith(":checkUserCapability"):
+            length = int(self.headers.get("Content-Length", 0))
+            if length:
+                self.rfile.read(length)  # drain: keep-alive breaks on unread bodies
             if self.capability_errors:
                 self._send(
                     {"error": {"code": 403,
@@ -136,6 +172,7 @@ class StubClassroom(BaseHTTPRequestHandler):
         if m:
             course_id = m.group(1)
             if course_id in self.coursework_403:
+                self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
                 self._send(
                     {"error": {"code": 403, "message": "Permission denied"}}, 403)
                 return
@@ -149,6 +186,7 @@ class StubClassroom(BaseHTTPRequestHandler):
         if m:
             course_id, coursework_id = m.group(1), m.group(2)
             if course_id in self.attachment_403:
+                self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
                 self._send(
                     {"error": {"code": 403,
                                "message": "Developer project not approved"}}, 403)
@@ -159,6 +197,7 @@ class StubClassroom(BaseHTTPRequestHandler):
                         "courseId": course_id, **body})
             return
 
+        self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         self._send({"error": {"code": 404, "message": "Not Found"}}, 404)
 
     def do_PATCH(self):
@@ -167,6 +206,7 @@ class StubClassroom(BaseHTTPRequestHandler):
         if m:
             course_id, coursework_id = m.group(1), m.group(2)
             if course_id in self.patch_403:
+                self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
                 self._send(
                     {"error": {"code": 403, "message": "Permission denied"}}, 403)
                 return
@@ -174,6 +214,7 @@ class StubClassroom(BaseHTTPRequestHandler):
             self.coursework_patches.append((course_id, coursework_id, body))
             self._send({"id": coursework_id, "courseId": course_id, **body})
             return
+        self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         self._send({"error": {"code": 404, "message": "Not Found"}}, 404)
 
 
@@ -182,6 +223,61 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 # Point the auth bridge at the stub (module-level constant, monkeypatched).
 cauth.CLASSROOM_API_BASE = f"http://127.0.0.1:{server.server_address[1]}"
+
+
+# ---------------------------------------------------------------------------
+# Stub campus.auth token broker (issue #30 seam; scriptable grant state)
+# ---------------------------------------------------------------------------
+class StubBroker(BaseHTTPRequestHandler):
+
+    """campus.auth broker releasing a google.classroom token whose scope is
+    the scripted `granted` list; 404 when "disconnected"."""
+    protocol_version = "HTTP/1.1"
+
+    granted: list = []
+    connected: bool = False
+
+    def log_message(self, *args):
+        pass
+
+    def _send(self, payload, status=200):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length:
+            self.rfile.read(length)  # drain: keep-alive breaks on unread bodies
+        if urlsplit(self.path).path != cauth.BROKER_PATH:
+            self._send({"error": {"code": "NOT_FOUND", "message": "no route"}}, 404)
+            return
+        if not self.connected:
+            self._send({
+                "error": {
+                    "code": "NOT_FOUND",
+                    "message": f"No google.classroom credential for user "
+                               f"{CAMPUS_EMAIL}; complete the Classroom connect "
+                               "flow first (via the app's integrations page)",
+                    "details": {}, "request_id": None,
+                }
+            }, 404)
+            return
+        self._send({
+            "provider": "google.classroom",
+            "user_id": CAMPUS_EMAIL,
+            "access_token": "broker-access-1",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": " ".join(self.granted),
+        })
+
+
+broker_server = ThreadingHTTPServer(("127.0.0.1", 0), StubBroker)
+threading.Thread(target=broker_server.serve_forever, daemon=True).start()
 
 
 def reset_stub():
@@ -290,6 +386,33 @@ def _fake_push_context(self):
 campus_auth_v1.AuthRoot.push_context = _fake_push_context
 
 app = create_app()
+app.testing = True  # propagate exceptions: verify, not serve
+
+
+class FakeCampusAuth:
+    """campus.auth stand-in for the seam: fresh bearer, stub broker base."""
+
+    def __init__(self):
+        self.client = SimpleNamespace(
+            base_url=f"http://127.0.0.1:{broker_server.server_address[1]}")
+
+    def get_token(self):
+        return SimpleNamespace(
+            id="cat-1", access_token="cat-1", refresh_token="crt-1",
+            is_expired=lambda: False)
+
+
+class SeamCampus:
+    """flask.current_app.campus: fake auth for the seam plus the
+    class-patched fake user/app sessions for the data routes."""
+
+    with_user_session = campus_python.Campus.with_user_session
+    with_app_session = campus_python.Campus.with_app_session
+
+
+seam_campus = SeamCampus()
+seam_campus.auth = FakeCampusAuth()
+app.campus = seam_campus
 
 
 def seed_user(client, email=CAMPUS_EMAIL):
@@ -298,14 +421,16 @@ def seed_user(client, email=CAMPUS_EMAIL):
 
 
 def seed_credentials(client, scopes, *, expires_at=None):
-    with client.session_transaction() as sess:
-        sess["classroom_credentials"] = {
-            "access_token": "seeded-access",
-            "refresh_token": "seeded-refresh",
-            "expires_at": expires_at if expires_at is not None else time.time() + 3600,
-            "scopes": list(scopes),
-            "email": CAMPUS_EMAIL,
-        }
+    """Connect the (global) stub broker grant; `client`/`expires_at` are
+    legacy parameters from the pre-#30 session-seeding signature."""
+    StubBroker.granted = list(scopes)
+    StubBroker.connected = True
+
+
+def revoke_credentials():
+    """Disconnect the stub broker: releases start answering 404."""
+    StubBroker.granted = []
+    StubBroker.connected = False
 
 
 def stored_links(assignment_id):
@@ -503,6 +628,7 @@ check("only the healthy class is linked",
 # ---------------------------------------------------------------------------
 client_noc = app.test_client()
 seed_user(client_noc)
+revoke_credentials()
 resp = client_noc.post(
     "/api/v1/assignments/a_eligible/classroom/send",
     json={"course_ids": ["course_111"]},
@@ -543,6 +669,7 @@ check("incremental authorize requests the write scope (+ identity)",
 # ---------------------------------------------------------------------------
 # 7. Input validation + ownership
 # ---------------------------------------------------------------------------
+seed_credentials(client, ALL_SCOPES)  # back from section 6's disconnect
 resp = client.post(
     "/api/v1/assignments/a_eligible/classroom/send", json={"course_ids": []})
 check("empty course_ids -> 400", resp.status_code == 400)
