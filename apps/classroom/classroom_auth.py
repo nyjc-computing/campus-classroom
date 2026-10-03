@@ -1,30 +1,34 @@
 """apps.classroom.classroom_auth
 
-Google Classroom auth bridge (issue #9, epic #3 GC-6/7 foundation).
+Google Classroom auth bridge (issue #9; broker swap issue #30).
 
-Campus authenticates identity only; this module bridges a Campus-authenticated
-user to a Google credential carrying the Classroom scopes the app needs, so
-other sessions can call `with_classroom_session()` and get a ready Classroom
-API client.
+Campus.auth is the sole custodian of Google Classroom credentials (the
+namespaced `google.classroom` integration; design campus#730 §2.4–2.5,
+tracker campus#733). This module releases the signed-in user's Classroom
+access token from campus.auth's token broker so other sessions can call
+`with_classroom_session()` and get a ready Classroom API client.
 
 Architecture (docs/auth-bridge.md has the full rationale):
 
-- The PRD (§7.1 RQ2) assumed Campus would extend its tokens with Classroom
-  scopes, but Campus cannot do that today: its Google proxy hardcodes
-  email/profile scopes and its credentials API only issues campus-provider
-  credentials. So the app runs its own Google OAuth flow with its own
-  GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET (PRD §6.10.2 step 3) and Google's
-  native incremental authorization (include_granted_scopes=true) stands in
-  for the Campus-side incremental approval.
-- Identity mapping: Campus user id/email is the Workspace email (Campus
-  provisions users from Google userinfo), so the Google account's verified
-  email must equal the Campus user's email. Mismatches are refused loudly
-  and no credential is stored.
-- Persistence: Google credentials live in the signed Flask session cookie
-  (epic rule: no local DB; sessions in Flask session). Long-term storage
-  should move to Campus once its credentials API accepts third-party
-  provider rows; `with_classroom_session()` is the only seam other code
-  should touch, so that swap is local to this module.
+- Token release: `with_classroom_session()` POSTs
+  `{campus.auth}/auth/v1/broker/google/classroom/` with the user's campus
+  bearer token (the one the app already holds from its campus login
+  session). The broker answers with a live access token, its expiry and
+  its scope — never a refresh token. When it nears expiry the app simply
+  asks the broker again (campus refreshes its stored credential silently
+  server-side). Tokens live in memory for at most one request's
+  duration; nothing is persisted anywhere.
+- Connecting: the user grants the `google.classroom` integration once via
+  the campus-profile integrations page (campus.auth's connect flow). This
+  app has no connect UX of its own; NotConnectedError points there.
+- Identity mapping is enforced campus-side at connect time (consenting
+  Google email must equal the campus session user), so the release path
+  needs no local identity check.
+- LEGACY (issue #30 retire lane, removed once the broker path is proven):
+  the app's own Google OAuth flow (`/classroom/authorize|callback` +
+  Flask-session token storage) is kept working through the transition,
+  but `with_classroom_session()` no longer reads or writes it —
+  session-stored Google credentials are dead weight until removal.
 """
 
 from __future__ import annotations
@@ -37,10 +41,13 @@ from urllib.parse import urlencode
 
 import flask
 import requests
+from campus_python.errors import APIError as CampusClientError
 
 # --- Scope inventory (PRD §6.4 MVP set, issue #9) ---------------------------
 
-# Identity scopes: needed to enforce the Campus email↔Google email match.
+# Identity scopes: enforced campus-side for the integration connect flow
+# (part of the google.classroom vault SCOPES cap); the legacy in-app flow
+# below still uses them for its own email match.
 GOOGLE_IDENTITY_SCOPES = (
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
@@ -76,16 +83,23 @@ CLASSROOM_SCOPES_MVP = (
 # the MVP classroom.course-work.readonly is listing-only. PRD §6.4 defers
 # it to post-MVP (feedback release needs it too, session #16), but
 # CourseWork creation comes first, so it is a FEATURE scope: never
-# requested at connect, demanded incrementally by the send flow via
+# requested at connect, demanded by the send flow via
 # with_classroom_session(required_scopes=...) — a missing grant raises
-# MissingClassroomScopesError and the errorhandler walks the teacher
-# through one more consent screen. (The PRD §6.4 table's "classroom.courses"
+# MissingClassroomScopesError. (The PRD §6.4 table's "classroom.courses"
 # is course-level management — not needed here.)
+#
+# NOTE (issue #30): the scope is beyond the google.classroom integration's
+# vault SCOPES cap (the 7 MVP + userinfo pair at seed time), so asking the
+# broker for it is rejected outright and NO connect flow can grant it yet.
+# The send flow therefore fails its scope gate with
+# MissingClassroomScopesError until campus widens the vault cap and the
+# cap set below is widened to match.
 CLASSROOM_SCOPES_SEND = (
     "https://www.googleapis.com/auth/classroom.coursework.students",
 )
 
-# Google endpoints. Module-level so the test harness can stub them.
+# Google endpoints (legacy in-app flow only). Module-level so the test
+# harness can stub them.
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
@@ -99,8 +113,42 @@ _CAPABILITY_PREVIEW_VERSION = "V1_20240930_PREVIEW"
 
 _HTTP_TIMEOUT = 30
 
-# Flask session key holding the stored Google credential dict.
+# Flask session key of the LEGACY stored Google credential (retire lane).
 _CREDENTIALS_KEY = "classroom_credentials"
+
+# --- campus.auth token broker (issue #30) -------------------------------------
+
+# campus.auth route that releases the user's google.classroom access
+# token (campus#733 Phase 1, live on dev via campus#741). Module-level so
+# the verify harness can retarget it at a stub.
+BROKER_PATH = "/auth/v1/broker/google/classroom/"
+
+# Scopes the broker may be asked for: the google.classroom integration's
+# vault SCOPES cap (7 MVP + userinfo pair at seed time). Asking beyond it
+# is a 400 AUTH_INVALID_SCOPE — a configuration bug, not a re-consent
+# situation — so caller requirements beyond the cap (CLASSROOM_SCOPES_SEND)
+# are checked locally against the returned grant instead. Widen this set
+# when campus widens the cap.
+_BROKER_ASKABLE = frozenset(CLASSROOM_SCOPES_MVP) | frozenset(GOOGLE_IDENTITY_SCOPES)
+
+# campus-profile origins (the integrations/connect host). development is
+# the Railway dev deployment; staging/production follow the campus-suite
+# service naming. CAMPUS_PROFILE_URL overrides explicitly.
+_PROFILE_DEVELOPMENT_URL = "https://campus-profile-development.up.railway.app"
+_PROFILE_URLS = {
+    "development": _PROFILE_DEVELOPMENT_URL,
+    "staging": "https://campus-profile.campus.nyjc.dev",
+    "production": "https://campus-profile.campus.nyjc.app",
+}
+
+
+def profile_integrations_url() -> str:
+    """Origin of the campus-profile app that hosts the connect UX."""
+    explicit = os.environ.get("CAMPUS_PROFILE_URL", "")
+    if explicit:
+        return explicit.rstrip("/")
+    env_name = os.environ.get("ENV", os.environ.get("CAMPUS_ENV", "development"))
+    return _PROFILE_URLS.get(env_name, _PROFILE_DEVELOPMENT_URL)
 
 
 # --- Errors ------------------------------------------------------------------
@@ -120,7 +168,11 @@ class ClassroomAuthError(Exception):
 
 
 class GoogleNotConfiguredError(ClassroomAuthError):
-    """GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing from the environment."""
+    """GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing from the environment.
+
+    Legacy in-app flow only; the broker path has no Google config of its
+    own (campus.auth holds the integration's client).
+    """
 
     code = "google_not_configured"
 
@@ -132,22 +184,24 @@ class GoogleNotConfiguredError(ClassroomAuthError):
 
 
 class NotConnectedError(ClassroomAuthError):
-    """The signed-in user has no stored Google credential."""
+    """campus.auth holds no google.classroom credential for the user."""
 
     code = "classroom_not_connected"
 
     def __init__(self):
         super().__init__(
-            "This action needs a Google Classroom connection. "
-            "Connect your Google account first."
+            "This action needs a Google Classroom connection. Connect your "
+            "Google account once on the Campus profile integrations page: "
+            f"{profile_integrations_url()}/profile/integrations"
         )
 
 
 class MissingClassroomScopesError(ClassroomAuthError):
-    """The stored credential lacks scopes the caller requires.
+    """The released credential lacks scopes the caller requires.
 
-    `missing` scopes can be requested incrementally by redirecting the user
-    to /classroom/authorize?scopes=<space-joined missing scopes>.
+    `missing` scopes can be granted by reconnecting via the campus-profile
+    integrations page — except scopes beyond the integration's vault cap,
+    which no connect flow can grant until campus widens it.
     """
 
     code = "classroom_missing_scopes"
@@ -161,10 +215,39 @@ class MissingClassroomScopesError(ClassroomAuthError):
         )
 
 
+class CampusSessionExpiredError(ClassroomAuthError):
+    """The user's Campus login session cannot back a broker release.
+
+    The broker requires a live campus bearer bound to the user; when none
+    can be obtained (no login session, or the stored campus credential is
+    gone/unrefreshable) the user must sign in to Campus again.
+    """
+
+    code = "campus_session_expired"
+
+    def __init__(self):
+        super().__init__(
+            "Your Campus sign-in has expired. Sign in to Campus again."
+        )
+
+
+class BrokerConfigError(ClassroomAuthError):
+    """campus.auth rejected the release as a caller/configuration error.
+
+    Raised for 400 AUTH_INVALID_SCOPE (min_scopes vs allowlist/vault cap)
+    and 403 bridge-guard denials (client flags): deployment configuration
+    bugs, logged loudly at the raise site, never swallowed.
+    """
+
+    code = "classroom_broker_config"
+
+
 class IdentityMismatchError(ClassroomAuthError):
     """Google account email does not match the Campus user's email.
 
-    Raised during the OAuth callback; the refusal is intentional and loud.
+    Legacy in-app flow only (the broker path enforces this campus-side at
+    connect). Raised during the OAuth callback; the refusal is intentional
+    and loud.
     """
 
     code = "classroom_identity_mismatch"
@@ -180,7 +263,8 @@ class IdentityMismatchError(ClassroomAuthError):
 
 
 class OAuthFlowError(ClassroomAuthError):
-    """The Google OAuth token/userinfo exchange failed."""
+    """The legacy OAuth token/userinfo exchange failed, or the campus.auth
+    broker could not be reached or returned a malformed response."""
 
     code = "classroom_oauth_flow_error"
 
@@ -195,7 +279,10 @@ class ClassroomAPIError(ClassroomAuthError):
         super().__init__(f"Classroom API call failed ({status_code}): {detail}")
 
 
-# --- Credential storage (Flask session) --------------------------------------
+# --- LEGACY credential storage (Flask session; issue #30 retire lane) --------
+#
+# Read/written only by the legacy /classroom/authorize|callback flow below.
+# with_classroom_session() no longer touches any of this.
 
 def get_stored_credentials() -> dict | None:
     """Return the current user's stored Google credential dict, or None."""
@@ -225,7 +312,121 @@ def missing_scopes(required, granted) -> list[str]:
     return [scope for scope in required if scope not in granted_set]
 
 
-# --- Google OAuth flow --------------------------------------------------------
+# --- campus.auth broker access (issue #30) -------------------------------------
+
+def _broker_url() -> str:
+    """Full campus.auth broker URL, from the app's Campus client."""
+    campus = flask.current_app.campus
+    return campus.auth.client.base_url.rstrip("/") + BROKER_PATH
+
+
+def _campus_bearer() -> str:
+    """The signed-in user's campus access token, refreshed when expired.
+
+    Public SDK surface only: `auth.get_token()` returns the stored campus
+    credential as-is (the SDK does not auto-refresh yet), so an expired
+    token is refreshed here the same way Campus._get_token_from_session
+    does. Any SDK auth failure maps to CampusSessionExpiredError — the
+    remedy is a fresh campus sign-in, not a retry.
+    """
+    auth = flask.current_app.campus.auth
+    try:
+        token = auth.get_token()
+        if token.is_expired():
+            login = auth.logins.from_session()
+            token = auth.token(
+                grant_type="refresh_token",
+                refresh_token=token.refresh_token,
+            )
+            auth.credentials["campus"][login.user_id].update(token=token)
+    except CampusClientError as err:
+        raise CampusSessionExpiredError() from err
+    return token.access_token
+
+
+def _broker_release(min_scopes: list[str]) -> dict:
+    """POST the campus.auth broker for the user's google.classroom token.
+
+    Error mapping (issue #30, semantics preserved for callers):
+        404 no connected credential   -> NotConnectedError (profile pointer)
+        403 + details.missing_scopes  -> MissingClassroomScopesError
+        401 bad/expired campus bearer -> CampusSessionExpiredError (re-login)
+        400 AUTH_INVALID_SCOPE / other 403 -> BrokerConfigError, logged
+            loudly: an allowlist/vault-cap/bridge-flag mismatch is a
+            deployment configuration bug and must not be swallowed.
+    """
+    try:
+        resp = requests.post(
+            _broker_url(),
+            json={"min_scopes": list(min_scopes)} if min_scopes else {},
+            headers={"Authorization": f"Bearer {_campus_bearer()}"},
+            timeout=_HTTP_TIMEOUT,
+        )
+    except requests.RequestException as err:
+        raise OAuthFlowError(
+            "Could not reach the Campus token broker; try again shortly."
+        ) from err
+
+    if resp.ok:
+        try:
+            return resp.json()
+        except ValueError as err:
+            raise OAuthFlowError(
+                "Campus token broker returned a malformed response."
+            ) from err
+    if resp.status_code == 404:
+        raise NotConnectedError()
+    if resp.status_code == 401:
+        raise CampusSessionExpiredError()
+
+    body: dict = {}
+    if resp.content:
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+    error = body.get("error") if isinstance(body, dict) else None
+    details = error.get("details", {}) if isinstance(error, dict) else {}
+    code = error.get("code", "") if isinstance(error, dict) else ""
+    missing = details.get("missing_scopes") if isinstance(details, dict) else None
+    if resp.status_code == 403 and missing:
+        raise MissingClassroomScopesError(list(missing), [])
+
+    flask.current_app.logger.error(
+        "campus.auth broker rejected the google.classroom release "
+        "(HTTP %s, %s): %s", resp.status_code, code or "no error code", body,
+    )
+    raise BrokerConfigError(
+        "Campus refused the Classroom token request "
+        f"(HTTP {resp.status_code}, {code or 'no error code'}); this is a "
+        "deployment configuration problem."
+    )
+
+
+def fetch_broker_credential(min_scopes: list[str] | None = None) -> dict:
+    """One broker release as a credential dict, for in-memory use only.
+
+    `min_scopes=None` returns the user's connected grant as-is (allowlist-
+    gated campus-side) — what the /classroom status page shows. A list
+    enforces the minimum on the broker. Never persisted: the caller holds
+    the token until `expires_in` at most, then asks the broker again.
+    """
+    data = _broker_release(min_scopes or [])
+    access_token = data.get("access_token") if isinstance(data, dict) else None
+    if not access_token:
+        raise OAuthFlowError("Campus token broker returned a malformed response.")
+    return {
+        "access_token": str(access_token),
+        "expires_at": time.time() + max(int(data.get("expires_in") or 0), 0),
+        "scopes": sorted(str(data.get("scope") or "").split()),
+        "email": str(data.get("user_id") or ""),
+    }
+
+
+# --- LEGACY Google OAuth flow (issue #30 retire lane) --------------------------
+#
+# Kept working through the broker transition; removed once the broker path
+# is proven (see issue #30 "Retire"). Not used by with_classroom_session().
 
 def _google_client_config() -> tuple[str, str]:
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -233,24 +434,6 @@ def _google_client_config() -> tuple[str, str]:
     if not (client_id and client_secret):
         raise GoogleNotConfiguredError()
     return client_id, client_secret
-
-
-def is_configured() -> bool:
-    """True when GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are set."""
-    try:
-        _google_client_config()
-        return True
-    except ClassroomAuthError:
-        return False
-
-
-def campus_user_email() -> str:
-    """Email of the Campus-authenticated user (identity anchor)."""
-    user = getattr(flask.g, "user", None)
-    email = getattr(user, "email", None) or getattr(user, "id", None)
-    if not email:
-        raise ClassroomAuthError("No Campus user is signed in.")
-    return str(email)
 
 
 def build_authorization_url(
@@ -380,48 +563,58 @@ def connect_from_callback(code: str, redirect_uri: str) -> dict:
     return creds
 
 
+def campus_user_email() -> str:
+    """Email of the Campus-authenticated user (identity anchor)."""
+    user = getattr(flask.g, "user", None)
+    email = getattr(user, "email", None) or getattr(user, "id", None)
+    if not email:
+        raise ClassroomAuthError("No Campus user is signed in.")
+    return str(email)
+
+
 # --- Classroom API client ------------------------------------------------------
 
 class ClassroomClient:
-    """Minimal Google Classroom REST client bound to one user's credential.
+    """Minimal Google Classroom REST client backed by the campus.auth broker.
 
-    Refreshes the access token when expired and once more on a 401, then
-    persists any refreshed credential back to the Flask session on close().
-    Other sessions add typed methods as needed; `request()` covers
-    everything else.
+    Holds one released access token in memory; asks the broker again when
+    it nears expiry or after a 401 (campus refreshes its stored credential
+    server-side — no refresh token ever reaches this app, and nothing is
+    persisted). Other sessions add typed methods as needed; `request()`
+    covers everything else.
     """
 
-    def __init__(self, creds: dict):
-        self._creds = dict(creds)
-        self._dirty = False
+    def __init__(self, required: tuple[str, ...] = ()):
+        self._required = tuple(required)
+        self._creds: dict | None = None
 
     # -- token handling --
 
-    def _token_expired(self) -> bool:
-        return time.time() >= float(self._creds.get("expires_at", 0)) - _EXPIRY_SKEW_SECONDS
+    def _ensure_token(self) -> None:
+        """Release (or re-release) a broker token, then gate required scopes.
 
-    def _refresh(self) -> None:
-        refresh_token = self._creds.get("refresh_token")
-        if not refresh_token:
-            raise NotConnectedError()
-        token = refresh_access_token(refresh_token)
-        self._creds["access_token"] = token["access_token"]
-        self._creds["expires_at"] = time.time() + int(token.get("expires_in", 3600))
-        granted = set((token.get("scope") or "").split())
-        if granted:
-            self._creds["scopes"] = sorted(set(self._creds.get("scopes", ())) | granted)
-        self._dirty = True
+        The broker is asked only for scopes within the integration's vault
+        cap (_BROKER_ASKABLE); any further requirement (feature scopes
+        beyond the cap) is checked locally against the returned grant.
+        """
+        if (self._creds is not None
+                and time.time()
+                < float(self._creds["expires_at"]) - _EXPIRY_SKEW_SECONDS):
+            return
+        ask = [scope for scope in self._required if scope in _BROKER_ASKABLE]
+        creds = fetch_broker_credential(ask)
+        if self._required:
+            missing = missing_scopes(self._required, creds["scopes"])
+            if missing:
+                raise MissingClassroomScopesError(missing, creds["scopes"])
+        self._creds = creds
 
     def _access_token(self) -> str:
-        if self._token_expired():
-            self._refresh()
+        self._ensure_token()
         return self._creds["access_token"]
 
     def close(self) -> None:
-        """Persist refreshed credentials back to the Flask session."""
-        if self._dirty:
-            store_credentials(self._creds)
-            self._dirty = False
+        """Nothing to persist: broker tokens are never stored."""
 
     # -- API calls --
 
@@ -444,8 +637,9 @@ class ClassroomClient:
                 timeout=_HTTP_TIMEOUT,
             )
             if resp.status_code == 401 and attempt == 1:
-                # Access token revoked/expired server-side: refresh once.
-                self._refresh()
+                # Access token revoked/expired server-side ahead of
+                # schedule: release a fresh one from the broker, retry once.
+                self._creds = None
                 continue
             break
         if not resp.ok:
@@ -514,27 +708,30 @@ def with_classroom_session(
 ) -> Iterator[ClassroomClient]:
     """Run a block with a ready Classroom client for the signed-in user.
 
+    The user's google.classroom access token is released from campus.auth's
+    token broker — eagerly, so NotConnectedError / MissingClassroomScopesError
+    raise before the block runs, as they always have — and held in memory
+    only. Callers are unchanged by the broker swap (issue #30).
+
     Usage:
         with with_classroom_session() as classroom:
             courses = classroom.courses_list()
 
     Raises (never a bare 500 — routes/handlers translate these):
-        NotConnectedError: user has no stored Google credential.
-        MissingClassroomScopesError: credential lacks `required_scopes`;
-            `err.missing` feeds the incremental re-consent redirect.
+        CampusSessionExpiredError: the campus sign-in is too stale to
+            release a token; the user must sign in again.
+        NotConnectedError: user has not connected google.classroom via the
+            campus-profile integrations page yet.
+        MissingClassroomScopesError: the grant lacks `required_scopes`;
+            `err.missing` feeds the reconnect guidance. Scopes beyond the
+            integration's vault cap can currently never be granted.
 
     Pass `required_scopes=()` to skip the scope gate for calls that only
     need whatever was granted.
     """
     required = tuple(required_scopes) if required_scopes is not None else CLASSROOM_SCOPES_MVP
-    creds = get_stored_credentials()
-    if creds is None:
-        raise NotConnectedError()
-    if required:
-        missing = missing_scopes(required, creds.get("scopes", []))
-        if missing:
-            raise MissingClassroomScopesError(missing, creds.get("scopes", []))
-    client = ClassroomClient(creds)
+    client = ClassroomClient(required)
+    client._ensure_token()
     try:
         yield client
     finally:

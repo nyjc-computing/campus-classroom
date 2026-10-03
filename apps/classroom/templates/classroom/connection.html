@@ -11,27 +11,19 @@
         as your Campus sign-in.
     </p>
 
-    {% if not configured %}
-    <div class="alert alert-warning">
-        <strong>Not configured.</strong> The server is missing
-        <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code>.
-        Ask an administrator to set them (see <code>.env.example</code>).
+    {% if status_error %}
+    <div class="alert alert-danger">
+        <strong>Could not check your Classroom connection.</strong>
+        {{ status_error }}
     </div>
     {% endif %}
 
     <div class="card mb-4">
         <div class="card-body">
             {% if connected %}
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div>
-                    <span class="badge text-bg-success me-2">Connected</span>
-                    <span class="fw-semibold">{{ connected_email }}</span>
-                </div>
-                <form method="post" action="{{ url_for('classroom_auth.disconnect') }}">
-                    <button type="submit" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-plug me-1"></i>Disconnect
-                    </button>
-                </form>
+            <div class="mb-3">
+                <span class="badge text-bg-success me-2">Connected</span>
+                <span class="fw-semibold">{{ connected_email }}</span>
             </div>
 
             <h2 class="h6 text-muted text-uppercase">Granted permissions</h2>
@@ -49,21 +41,22 @@
                 Missing {{ missing_scopes|length }} of the Classroom permissions
                 this app needs. Some features will be unavailable until you
                 reconnect.<br>
-                <a class="btn btn-warning btn-sm mt-2"
-                   href="{{ url_for('classroom_auth.authorize', scopes=missing_scopes|join(' ')) }}">
-                    <i class="bi bi-arrow-repeat me-1"></i>Grant missing permissions
+                <a class="btn btn-warning btn-sm mt-2" target="_blank" rel="noopener"
+                   href="{{ profile_integrations_url }}">
+                    <i class="bi bi-arrow-repeat me-1"></i>Reconnect on the Campus profile page
                 </a>
             </div>
             {% endif %}
-            {% else %}
+            {% elif connected == False %}
             <p class="mb-3">
                 <span class="badge text-bg-secondary me-2">Not connected</span>
                 Classroom features (sending assignments, student views) need a
-                one-time Google consent.
+                one-time Google consent on the Campus profile page.
             </p>
-            <a class="btn btn-primary"
-               href="{{ url_for('classroom_auth.authorize') }}">
+            <a class="btn btn-primary" target="_blank" rel="noopener"
+               href="{{ profile_integrations_url }}">
                 <i class="bi bi-google text-danger me-1"></i>Connect Google Classroom
+                on the Campus profile page
             </a>
             {% endif %}
         </div>

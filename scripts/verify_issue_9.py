@@ -1,27 +1,31 @@
 """Verification for issue #9: Campus OAuth incremental Classroom scopes +
-Google↔Campus identity mapping.
+Google↔Campus identity mapping — LEGACY in-app flow checks.
 
-Runs the full auth bridge against a local stub of Google's OAuth +
-Classroom endpoints (no network, no real Google account needed):
+NOTE (issue #30, 2026-10-03): `with_classroom_session()` now releases the
+user's Classroom token from campus.auth's token broker, and the connect UX
+is the campus-profile integrations page. The in-app Google OAuth flow below
+(/classroom/authorize|callback + Flask-session token storage) is legacy,
+kept working through the transition and removed once the broker path is
+proven (issue #30 "Retire" lane). This script therefore now verifies ONLY
+the legacy flow:
 
 1. /classroom/authorize redirects to Google with the MVP scope set,
    access_type=offline, include_granted_scopes=true, prompt=consent,
    login_hint = Campus email, hd = workspace domain,
    redirect_uri = {PUBLIC_URL}/classroom/callback.
-2. Happy-path callback exchanges the code, enforces the email match,
-   stores the credential, and /classroom then performs an authenticated
-   courses.list() through with_classroom_session().
+2. Happy-path callback exchanges the code, enforces the email match, and
+   stores the credential in the Flask session (legacy storage contract —
+   no longer read by with_classroom_session()).
 3. State (CSRF) mismatch is refused loudly (400), nothing stored.
 4. Google email ≠ Campus email is refused loudly (403), nothing stored.
-5. user-cancelled consent (error=access_denied) lands on a clean flash.
-6. Missing-scope state: /classroom shows a clean reconnect prompt, the
-   with_classroom_session() gate raises with the exact missing list, the
-   incremental re-authorize URL requests only the missing scopes, and an
-   API-style route gets 403 JSON with an authorize_url — never a 500.
-7. Expired access tokens are refreshed against the token endpoint and the
-   refreshed credential is persisted back into the session; a 401 from the
-   API triggers one refresh-and-retry.
-8. GOOGLE_CLIENT_ID/SECRET unset produces clean config errors, not 500s.
+5. User-cancelled consent (error=access_denied) lands on a clean flash.
+6. The `?scopes=` narrowing parameter requests only the missing subset,
+   still with include_granted_scopes=true.
+7. GOOGLE_CLIENT_ID/SECRET unset produces clean config errors, not 500s.
+8. POST /classroom/disconnect clears the stored credential.
+
+The swapped seam (broker release, error mapping, scope gates, token
+refresh, /classroom page states) is verified by scripts/verify_issue_30.py.
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_9.py
 """
@@ -41,11 +45,44 @@ os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-9-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-9-client-secret")
 os.environ["WORKSPACE_DOMAIN"] = "nyjc.edu.sg"
 
-import flask  # noqa: E402
-
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
+import flask  # noqa: E402
+import requests  # noqa: E402
+import requests.adapters  # noqa: E402
+from urllib3.util.retry import Retry  # noqa: E402
+
 from apps.classroom import classroom_auth as cauth  # noqa: E402
 from apps.classroom import create_app  # noqa: E402
+
+# One pooled, retrying session for every HTTP call the legacy flow makes:
+# fresh loopback connections intermittently abort on this dev box (WinError
+# 10053), and keep-alive both dodges that and is far faster. The stub
+# handler below runs HTTP/1.1 to match.
+_shared_http = requests.Session()
+_shared_http.mount("http://", requests.adapters.HTTPAdapter(
+    max_retries=Retry(total=3, backoff_factor=0.05), pool_maxsize=20))
+_shared_http.mount("https://", requests.adapters.HTTPAdapter(
+    max_retries=Retry(total=3, backoff_factor=0.05), pool_maxsize=20))
+
+
+class _PooledRequests:
+    """Drop-in for the requests-module surface classroom_auth uses."""
+
+    def get(self, *args, **kwargs):
+        return _shared_http.get(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        return _shared_http.post(*args, **kwargs)
+
+    def request(self, *args, **kwargs):
+        return _shared_http.request(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # module attributes the seam reads (e.g. RequestException)
+        return getattr(requests, name)
+
+
+cauth.requests = _PooledRequests()
 
 CAMPUS_EMAIL = "teacher@nyjc.edu.sg"
 OTHER_EMAIL = "someone@gmail.com"
@@ -56,13 +93,6 @@ IDENTITY = list(cauth.GOOGLE_IDENTITY_SCOPES)
 SUBSET_SCOPES = [s for s in ALL_MVP if "rosters" not in s and
                  "student-submissions.students" not in s]
 MISSING = cauth.missing_scopes(ALL_MVP, SUBSET_SCOPES)
-
-COURSES_PAYLOAD = {
-    "courses": [
-        {"id": "course_111", "name": "CS1101s", "section": "25S1-01"},
-        {"id": "course_222", "name": "Computing Plus", "section": "25S1-02"},
-    ]
-}
 
 failures = []
 
@@ -75,16 +105,15 @@ def check(name, cond, detail=""):
 
 
 # ---------------------------------------------------------------------------
-# Stub Google OAuth + Classroom server
+# Stub Google OAuth server (legacy flow only; no Classroom API needed here)
 # ---------------------------------------------------------------------------
 class StubGoogle(BaseHTTPRequestHandler):
-    """Minimal Google endpoints with scriptable token/email/401 behaviour."""
+
+    """Minimal Google endpoints with scriptable token/email behaviour."""
+    protocol_version = "HTTP/1.1"
 
     codes: dict = {}          # code -> {"scopes": [...], "email": str}
-    refresh_scopes: dict = {}  # refresh_token -> [...]
-    token_emails: dict = {}    # access_token -> str
-    stale_tokens: set = set()  # access tokens that answer 401
-    refresh_calls: list = []
+    token_emails: dict = {}   # access_token -> email (userinfo lookup)
 
     def log_message(self, *args):
         pass
@@ -99,8 +128,7 @@ class StubGoogle(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _bearer(self):
-        header = self.headers.get("Authorization", "")
-        return header.removeprefix("Bearer ").strip()
+        return self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
 
     def do_POST(self):
         if urlsplit(self.path).path != "/token":
@@ -108,37 +136,19 @@ class StubGoogle(BaseHTTPRequestHandler):
             return
         length = int(self.headers.get("Content-Length", 0))
         form = parse_qs(self.rfile.read(length).decode())
-        grant_type = form.get("grant_type", [""])[0]
-        if grant_type == "authorization_code":
+        if form.get("grant_type", [""])[0] == "authorization_code":
             code = form.get("code", [""])[0]
             spec = self.codes.get(code)
             if not spec:
                 self._send({"error": "invalid_grant"}, 400)
                 return
             access = f"access-for-{code}"
-            refresh = f"refresh-for-{code}"
             self.token_emails[access] = spec["email"]
-            self.refresh_scopes[refresh] = spec["scopes"]
             self._send({
                 "access_token": access,
-                "refresh_token": refresh,
+                "refresh_token": f"refresh-for-{code}",
                 "expires_in": 3600,
                 "scope": " ".join(spec["scopes"]),
-                "token_type": "Bearer",
-            })
-        elif grant_type == "refresh_token":
-            refresh = form.get("refresh_token", [""])[0]
-            scopes = self.refresh_scopes.get(refresh)
-            if not scopes:
-                self._send({"error": "invalid_grant"}, 400)
-                return
-            self.refresh_calls.append(refresh)
-            access = f"access-refreshed-{len(self.refresh_calls)}-{refresh}"
-            self.token_emails[access] = None  # email not re-checked on refresh
-            self._send({
-                "access_token": access,
-                "expires_in": 3600,
-                "scope": " ".join(scopes),
                 "token_type": "Bearer",
             })
         else:
@@ -146,25 +156,13 @@ class StubGoogle(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        token = self._bearer()
         if path == "/userinfo":
-            email = self.token_emails.get(token)
-            if email is None or token in self.stale_tokens:
-                self._send({"error": "invalid_token"}, 401)
-                return
+            email = self.token_emails.get(self._bearer())
             self._send({
                 "sub": "google-sub-123",
-                "email": email,
+                "email": email or CAMPUS_EMAIL,
                 "email_verified": True,
             })
-        elif path == "/v1/courses":
-            if token in self.stale_tokens:
-                self._send({"error": {"code": 401, "message": "Invalid Credentials"}}, 401)
-                return
-            if token not in self.token_emails:
-                self._send({"error": {"code": 403, "message": "Permission denied"}}, 403)
-                return
-            self._send(COURSES_PAYLOAD)
         else:
             self._send({"error": "not_found"}, 404)
 
@@ -174,11 +172,10 @@ STUB_PORT = server.server_address[1]
 STUB = f"http://127.0.0.1:{STUB_PORT}"
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
-# Point the auth bridge at the stub (module-level constants, monkeypatched).
+# Point the legacy flow at the stub (module-level constants, monkeypatched).
 cauth.GOOGLE_AUTH_URL = f"{STUB}/auth"
 cauth.GOOGLE_TOKEN_URL = f"{STUB}/token"
 cauth.GOOGLE_USERINFO_URL = f"{STUB}/userinfo"
-cauth.CLASSROOM_API_BASE = STUB
 
 
 # ---------------------------------------------------------------------------
@@ -197,32 +194,9 @@ campus_auth_v1.AuthRoot.push_context = _fake_push_context
 app = create_app()
 
 
-@app.get("/api/_probe_classroom")
-def _probe_classroom(**_):
-    """Stands in for the API/iframe routes future sessions will write."""
-    with cauth.with_classroom_session() as classroom:
-        return {"data": classroom.courses_list()}
-
-
 def seed_user(client):
     with client.session_transaction() as sess:
         sess["verify_user"] = {"id": CAMPUS_EMAIL, "email": CAMPUS_EMAIL}
-
-
-def seed_credentials(client, scopes, *, expires_at=None, access="seeded-access",
-                    refresh="seeded-refresh"):
-    with client.session_transaction() as sess:
-        sess["classroom_credentials"] = {
-            "access_token": access,
-            "refresh_token": refresh,
-            "expires_at": expires_at if expires_at is not None else time.time() + 3600,
-            "scopes": list(scopes),
-            "email": CAMPUS_EMAIL,
-        }
-        if access:
-            StubGoogle.token_emails[access] = CAMPUS_EMAIL
-        if refresh:
-            StubGoogle.refresh_scopes[refresh] = list(scopes)
 
 
 def stored_creds(client):
@@ -283,7 +257,7 @@ check("authorize ignores unknown ?scopes= tokens",
       set(ALL_MVP) <= set(auth_params(loc).get("scope", "").split()))
 
 # ---------------------------------------------------------------------------
-# 2. Happy path: callback -> stored credential -> authenticated courses.list()
+# 2. Happy path: callback -> stored credential (legacy storage contract)
 # ---------------------------------------------------------------------------
 StubGoogle.codes["code-full"] = {"scopes": IDENTITY + ALL_MVP, "email": CAMPUS_EMAIL}
 resp = client.get(
@@ -302,23 +276,6 @@ if creds:
     check("stored credential keeps the refresh token", bool(creds["refresh_token"]))
     check("stored credential expiry is in the future",
           creds["expires_at"] > time.time())
-
-resp = client.get("/classroom/")
-check("connection page renders (200)", resp.status_code == 200)
-html = resp.get_data(as_text=True)
-check("connection page shows connected state", "Connected" in html)
-check("connection page shows the courses.list() result (acceptance demo)",
-      "CS1101s" in html and "Computing Plus" in html)
-
-# Direct courses_list through the context manager, in a request context
-with app.test_request_context("/"):
-    flask.session["verify_user"] = {"id": CAMPUS_EMAIL, "email": CAMPUS_EMAIL}
-    flask.g.user = SimpleNamespace(id=CAMPUS_EMAIL, email=CAMPUS_EMAIL)
-    flask.session["classroom_credentials"] = stored_creds(client)
-    with cauth.with_classroom_session() as classroom:
-        courses = classroom.courses_list(teacher_only=True)
-    check("with_classroom_session yields a working client (courses.list)",
-          [c["name"] for c in courses] == ["CS1101s", "Computing Plus"])
 
 # ---------------------------------------------------------------------------
 # 3. CSRF: state mismatch refused loudly, nothing stored
@@ -357,33 +314,9 @@ check("cancelled consent redirects cleanly",
 check("cancelled consent stores nothing", stored_creds(client_cancel) is None)
 
 # ---------------------------------------------------------------------------
-# 6. Missing-scope state: clean errors + incremental re-consent
+# 6. Incremental re-consent: ?scopes= requests only the missing subset
 # ---------------------------------------------------------------------------
 seed_user(client)
-seed_credentials(client, SUBSET_SCOPES)
-resp = client.get("/classroom/")
-check("missing-scope connection page still renders (no 500)", resp.status_code == 200)
-html = resp.get_data(as_text=True)
-check("missing-scope page lists what to grant",
-      all(s in html for s in MISSING))
-check("missing-scope page offers incremental reconnect",
-      "Grant missing permissions" in html)
-
-with app.test_request_context("/"):
-    flask.session["classroom_credentials"] = {
-        "access_token": "a", "refresh_token": "r",
-        "expires_at": time.time() + 3600, "scopes": SUBSET_SCOPES,
-        "email": CAMPUS_EMAIL,
-    }
-    try:
-        with cauth.with_classroom_session():
-            pass
-        check("scope gate raises on missing scopes", False, "no error raised")
-    except cauth.MissingClassroomScopesError as err:
-        check("scope gate raises on missing scopes", True)
-        check("missing scopes reported exactly",
-              set(err.missing) == set(MISSING), str(err.missing))
-
 loc = authorize_location(client, f"?{urlencode({'scopes': ' '.join(MISSING)})}")
 inc_params = auth_params(loc)
 check("incremental authorize requests only the missing scopes",
@@ -392,63 +325,8 @@ check("incremental authorize requests only the missing scopes",
 check("incremental authorize still merges granted scopes",
       inc_params.get("include_granted_scopes") == "true")
 
-# API-style route gets structured JSON, never a 500
-seed_credentials(client, SUBSET_SCOPES)
-resp = client.get("/api/_probe_classroom")
-check("API route with missing scopes returns 403 JSON", resp.status_code == 403)
-body = resp.get_json()
-check("API error carries code + missing scopes + authorize_url",
-      body["error"]["code"] == "classroom_missing_scopes"
-      and set(body["error"]["missing_scopes"]) == set(MISSING)
-      and "/classroom/authorize" in body["error"]["authorize_url"])
-
-resp = client.get("/api/_probe_classroom", headers={"Accept": "application/json"})
-check("JSON-negotiated requests get JSON errors too", resp.status_code == 403)
-
-# Not connected at all
-client2 = app.test_client()
-seed_user(client2)
-resp = client2.get("/classroom/")
-check("not-connected page renders with connect CTA (no 500)",
-      resp.status_code == 200 and b"Connect Google Classroom" in resp.data)
-resp = client2.get("/api/_probe_classroom")
-check("not-connected API route returns 403 JSON",
-      resp.status_code == 403
-      and resp.get_json()["error"]["code"] == "classroom_not_connected")
-
 # ---------------------------------------------------------------------------
-# 7. Token refresh: proactive (expired) and reactive (401 retry)
-# ---------------------------------------------------------------------------
-seed_user(client)
-seed_credentials(
-    client, ALL_MVP,
-    expires_at=time.time() - 100,
-    access="expired-access", refresh="refresh-valid",
-)
-resp = client.get("/classroom/")
-check("expired token is refreshed and courses.list succeeds",
-      resp.status_code == 200 and b"CS1101s" in resp.data)
-check("refresh endpoint was hit", "refresh-valid" in StubGoogle.refresh_calls)
-refreshed = stored_creds(client)
-check("refreshed credential persisted to session",
-      refreshed["access_token"] != "expired-access"
-      and refreshed["expires_at"] > time.time())
-
-StubGoogle.stale_tokens.add("revoked-server-side")
-seed_credentials(
-    client, ALL_MVP,
-    expires_at=time.time() + 3600,
-    access="revoked-server-side", refresh="refresh-401-retry",
-)
-resp = client.get("/classroom/")
-check("401 triggers one refresh-and-retry (courses.list still succeeds)",
-      resp.status_code == 200 and b"CS1101s" in resp.data)
-check("post-retry credential persisted",
-      stored_creds(client)["access_token"] != "revoked-server-side")
-StubGoogle.stale_tokens.clear()
-
-# ---------------------------------------------------------------------------
-# 8. Unconfigured Google credentials -> clean errors, not 500s
+# 7. Unconfigured Google credentials -> clean errors, not 500s
 # ---------------------------------------------------------------------------
 saved = (os.environ.pop("GOOGLE_CLIENT_ID", None),
          os.environ.pop("GOOGLE_CLIENT_SECRET", None))
@@ -457,9 +335,6 @@ try:
     check("authorize without GOOGLE_* config redirects with a flash",
           resp.status_code == 302
           and resp.headers["Location"].endswith("/classroom/"))
-    resp = client.get("/classroom/", follow_redirects=True)
-    check("connection page shows config guidance (no 500)",
-          resp.status_code == 200 and b"GOOGLE_CLIENT_ID" in resp.data)
 finally:
     if saved[0]:
         os.environ["GOOGLE_CLIENT_ID"] = saved[0]
@@ -467,7 +342,7 @@ finally:
         os.environ["GOOGLE_CLIENT_SECRET"] = saved[1]
 
 # ---------------------------------------------------------------------------
-# 9. Disconnect
+# 8. Disconnect
 # ---------------------------------------------------------------------------
 resp = client.post("/classroom/disconnect")
 check("disconnect clears the stored credential",
