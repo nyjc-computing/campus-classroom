@@ -18,9 +18,8 @@ real Google account):
    without attachment_id; outcome reports the degradation.
 5. Partial failure: one course 403s, the other still posts.
 6. Re-send: already-linked courses report already_linked.
-7. Not connected / missing coursework-students scope: 403 JSON with
-   authorize_url; the incremental authorize URL requests exactly the
-   missing scope (allowlist includes the feature scope).
+7. Not connected / missing coursework-students scope: 403 JSON naming the
+   missing scope with the campus-profile reconnect_url.
 8. Input validation (empty course_ids -> 400) and ownership (403).
 9. /a/{assignment_id} renders publicly (no Campus login), shows the
    assignment, sends no X-Frame-Options header; unknown id -> 404.
@@ -42,9 +41,6 @@ from urllib.parse import parse_qs, urlsplit
 # load_dotenv() does not override variables that are already set).
 os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-10-secret"
-os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-10-client-id")
-os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-10-client-secret")
-os.environ["WORKSPACE_DOMAIN"] = "nyjc.edu.sg"
 
 import campus_python  # noqa: E402
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
@@ -650,21 +646,9 @@ check("missing scope names classroom.coursework.students",
       err["code"] == "classroom_missing_scopes"
       and err["missing_scopes"] == [SEND_SCOPE],
       json.dumps(err))
-check("error carries an incremental authorize_url",
-      "/classroom/authorize" in err["authorize_url"]
-      and SEND_SCOPE in err["authorize_url"], err["authorize_url"])
-
-# The authorize route allowlists the feature scope for incremental consent
-from urllib.parse import urlencode  # noqa: E402
-
-resp = client_scope.get(
-    f"/classroom/authorize?{urlencode({'scopes': SEND_SCOPE})}")
-loc = resp.headers["Location"]
-params = {k: v[0] for k, v in parse_qs(urlsplit(loc).query).items()}
-check("incremental authorize requests the write scope (+ identity)",
-      set(params["scope"].split())
-      == {SEND_SCOPE} | set(cauth.GOOGLE_IDENTITY_SCOPES),
-      params.get("scope", ""))
+check("error carries the profile-page reconnect_url",
+      "/profile/integrations" in err.get("reconnect_url", ""),
+      str(err.get("reconnect_url")))
 
 # ---------------------------------------------------------------------------
 # 7. Input validation + ownership

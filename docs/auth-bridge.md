@@ -1,36 +1,7 @@
-# Google Classroom Auth Bridge (issue #9; broker swap issue #30)
+# Google Classroom Auth Bridge (issue #9; broker swap + legacy retirement #30)
 
 How a Campus-authenticated user gets a Google credential that can call the
 Classroom API, and how the other add-on sessions (#10–#16) use it.
-
-> **2026-10-03 — the seam now runs on campus.auth's token broker (issue
-> #30).** `with_classroom_session()` POSTs
-> `{campus.auth}/auth/v1/broker/google/classroom/` with the user's campus
-> bearer and receives a live `google.classroom` access token (expiry +
-> scope, **never a refresh token**). Tokens live in memory until `expires_in`,
-> then the app just asks the broker again — campus refreshes server-side.
-> Nothing is persisted anywhere. Connect UX is the **campus-profile
-> integrations page** (one-time, per user; no existing tokens were migrated),
-> and `NotConnectedError` points there. Sections 1–4 below describe the
-> **legacy in-app flow** (`/classroom/authorize|callback` + Flask-session
-> token storage) kept working through the transition and removed once the
-> broker path is proven (issue #30 "Retire" lane).
->
-> Scope reality (corrected 2026-10-03 after live verification): the dev
-> vault's SCOPES cap is WIDER than first recorded — the profile connect
-> grants 11 scopes (7 MVP + `coursework.students` + userinfo pair +
-> openid) — so **Send-to-Classroom works through the broker today**. The
-> seam still deliberately ASKS the broker only for the MVP∩required floor
-> (`_BROKER_ASKABLE`; asking beyond a deployment's cap is a 400
-> AUTH_INVALID_SCOPE) and enforces feature scopes locally against the
-> returned grant.
->
-> Verified live 2026-10-03: profile connect → `/classroom` shows Connected
-> (all 11 scopes) + live `courses.list()` through the broker-released
-> token.
->
-> Verify the swapped seam with `scripts/verify_issue_30.py`; the legacy
-> flow's remaining checks live in `scripts/verify_issue_9.py`.
 
 **TL;DR for other sessions**
 
@@ -50,84 +21,58 @@ def whatever(**_):
 
 Raising is enough — an app-wide errorhandler converts every
 `ClassroomAuthError` into either a machine-readable JSON 4xx (API and
-`/addon/` paths, including an `authorize_url` for the missing scopes) or a
-flash + redirect (browser paths). None of them surface as 500.
+`/addon/` paths) or a flash + redirect (browser paths). None of them
+surface as 500.
 
 ---
 
-## 1. Why this design (and not what the PRD assumed)
+## 1. How it works (since issue #30, 2026-10-03)
 
-PRD §7.1 RQ2 resolved "do we need separate Google OAuth credentials?" with
-"no — extend Campus tokens with Classroom scopes incrementally". That
-presumes Campus capabilities that **do not exist today** (verified against
-`campus@main`, 2026-10-01):
+**campus.auth is the sole custodian of Google Classroom credentials** (the
+namespaced `google.classroom` integration; design campus#730 §2.4–2.5,
+tracker campus#733). This app holds no Google tokens of any kind.
 
-| PRD assumption | Campus reality |
-|---|---|
-| Campus tokens can carry Classroom scopes | The Google proxy (`campus/auth/oauth_proxy/google/proxy.py`) hardcodes `scopes = ["email", "profile"]`; no Classroom scope is ever requested from Google |
-| Refreshing a Campus token yields Google credentials | Campus-issued tokens are opaque Campus-API-only bearers; the upstream Google tokens Campus stores are internal to the Google proxy and there is no endpoint that re-issues or exchanges them for downstream apps |
-| Scope consent config on the Campus OAuth client | `/auth/v1/authorize` ignores the `scope` parameter entirely (TODO in code); actual scopes come from `POST /auth/v1/sessions/campus/` and are granted verbatim; a Campus scope string is meaningless to Google anyway |
-| Store third-party Google tokens via Campus credentials API | `POST /auth/v1/credentials/<provider>/<user_id>` (`UserCredentialsResource.new()`) asserts `provider == "campus"` — third-party provider rows cannot be created through the API |
+- **Connecting (one-time, per user):** the user clicks Connect on the
+  Classroom card of the **campus-profile integrations page**
+  (`/profile/integrations`). campus.auth runs the Google consent (forced
+  `prompt=consent`), enforces the identity mapping there (consenting
+  Google email must equal the campus session user), and stores the
+  credential in its vault. This app has no connect UX of its own.
+- **Releasing (every request that needs Classroom):**
+  `with_classroom_session()` POSTs
+  `{campus.auth}/auth/v1/broker/google/classroom/` with the user's **campus**
+  bearer token — the one the app already holds from its campus login
+  session (SDK `auth.get_token()`, refreshed when expired via the
+  refresh-token grant). The response carries `access_token`, `expires_in`
+  and `scope`; **no refresh token ever leaves campus.auth**.
+- **Token lifetime:** in-memory only, until `expires_in` (60 s skew), then
+  the app simply asks the broker again — campus refreshes its stored
+  credential silently server-side. A Classroom 401 triggers one
+  re-release + retry. Nothing is persisted anywhere.
+- **Scope gating:** the broker is asked only for the conservative floor
+  (`_BROKER_ASKABLE` = MVP + identity scopes; asking beyond a deployment's
+  vault SCOPES cap is a 400 `AUTH_INVALID_SCOPE`, i.e. a configuration
+  bug). Caller requirements beyond the floor (the send flow's
+  `classroom.coursework.students`) are enforced **locally** against the
+  returned grant. On dev the vault grant is 11 scopes — everything this
+  app needs, verified live 2026-10-03.
 
-So the MVP implementation uses the **app's own Google OAuth client**
-(`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, PRD §6.10.2 step 3 — the same
-GCP project the add-on manifest in #11 needs) and Google's **native
-incremental authorization** to stand in for the Campus-side flow:
+## 2. Error mapping (preserved semantics for callers)
 
-- The user is authenticated by Campus first (identity anchor, no second
-  login to Campus).
-- On first Classroom action, `/classroom/authorize` sends them to Google
-  with `login_hint=<campus email>` and `hd=<workspace domain>`, so the
-  right account is pre-selected and pinned.
-- When new scopes are needed later (e.g. `classroom.push-notifications`
-  for #16), the app requests **only the missing scopes** with
-  `include_granted_scopes=true` — Google merges them into the existing
-  grant. That is the "incremental scope approval" acceptance criterion.
-- `prompt=consent` + `access_type=offline` guarantee a refresh token on
-  every consent round.
+| Broker / seam condition | Raised as | JSON code | Browser path |
+|---|---|---|---|
+| 404 no connected credential | `NotConnectedError` | `classroom_not_connected` (403) | flash + connection page (profile CTA) |
+| 403 + `details.missing_scopes` | `MissingClassroomScopesError` | `classroom_missing_scopes` (403) + `missing_scopes` + `reconnect_url` | flash + connection page |
+| 401 (campus bearer unusable) | `CampusSessionExpiredError` | `campus_session_expired` (401) | redirect into campus re-login flow |
+| 400 `AUTH_INVALID_SCOPE` / bridge-guard 403 | `BrokerConfigError` (+ ERROR log) | `classroom_broker_config` (502) | flash + connection page |
+| broker unreachable / malformed | `OAuthFlowError` | `classroom_oauth_flow_error` (502) | flash + connection page |
 
-If Campus later ships a Classroom-scope token bridge (tracked upstream),
-`with_classroom_session()` is the single seam to swap — callers don't
-change.
+Remediation for connect/reconnect is always the campus-profile
+integrations page (`reconnect_url` in JSON; CTA button in the UI).
 
-## 2. Identity mapping (Google ↔ Campus)
+## 3. Scope inventory
 
-Campus provisions users from Google Workspace userinfo with
-`user_id = email` and restricts logins to `WORKSPACE_DOMAIN`. The bridge
-therefore keys identity on **email equality**:
-
-1. Google consent is pre-pinned (`login_hint`, `hd`) to the Campus email.
-2. At the callback, the app fetches userinfo and **refuses** unless
-   `email_verified` and Google email == Campus user email
-   (`IdentityMismatchError` → loud 403 page, logged at ERROR, **nothing
-   stored**).
-3. The state parameter (CSRF) is validated before any exchange; mismatch →
-   loud 400, nothing exchanged.
-
-## 3. Token persistence + refresh (the decision)
-
-**Decision: Flask session (signed cookie).** Alternatives considered:
-
-- *Campus credentials store* — the right long-term home, but the API
-  refuses third-party provider rows (see table above); would require a
-  campus-repo change. Revisit when that ships.
-- *Server-side session store* — needs a new local store, violating the
-  epic's "no local DB; sessions in Flask session" rule.
-
-Properties of the chosen approach: the cookie is signed (tamper-proof) and
-HttpOnly, but **not encrypted** — the token is readable by its own user
-(acceptable: it's their own Google grant) and exposed to any XSS in the
-app. The stored dict holds `access_token`, `refresh_token`, `expires_at`,
-`scopes`, `email`.
-
-**Refresh strategy:** `ClassroomClient` refreshes proactively when the
-access token is within 60s of expiry and reactively once on a 401; the
-refreshed values are written back to the Flask session on context exit. A
-refresh failure raises cleanly ("connection expired — reconnect").
-
-## 4. Scope inventory
-
-Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
+Requested via the broker (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 
 | Scope | For |
 |---|---|
@@ -139,61 +84,53 @@ Requested at connect (`CLASSROOM_SCOPES_MVP`, PRD §6.4):
 | `classroom.student-submissions.students.readonly` | Teacher: review submissions (#15). PRD's "classroom.coursework.students.readonly" is a noncanonical alias of this — request the canonical name only |
 | `classroom.rosters.readonly` | Teacher roster verification |
 
-Plus `userinfo.email` / `userinfo.profile` for the identity match.
-
-Requested **incrementally at first use** (feature scopes,
-`CLASSROOM_SCOPES_SEND`, never at connect):
+Feature scope, demanded locally by the send flow
+(`CLASSROOM_SCOPES_SEND`):
 
 | Scope | For |
 |---|---|
-| `classroom.coursework.students` | `courseWork.create`/`.patch` — Send-to-Classroom drafts + Link Material (#10; PRD §6.4 defers it to feedback release #16, but the write scope is already needed here). The MVP `classroom.course-work.readonly` is listing-only |
+| `classroom.coursework.students` | `courseWork.create`/`.patch` — Send-to-Classroom drafts + Link Material (#10). In the dev vault grant (verified 2026-10-03), so the send flow works through the broker |
 
-Scope names come from the GCP **Data access** list (canonical), not the PRD
-table — Google rejects unknown/noncanonical scope strings outright at the
-authorize URL ("Some requested scopes were invalid").
+Scope names come from the GCP **Data access** list (canonical), not the
+PRD table — Google rejects unknown/noncanonical scope strings outright.
 
 **Deliberately NOT requested** (post-MVP, per issue #9):
 `classroom.courses` (course-level management / grade passback — the
 *readonly* variant IS requested),
 `drive.readonly` (Drive shortcuts),
-`classroom.push-notifications`
-(feedback release — #16 adds it via the incremental path).
+`classroom.push-notifications` (feedback release — #16 adds it).
 
-## 5. Routes added
+## 4. Routes
 
 | Route | Purpose |
 |---|---|
-| `GET /classroom` | Connection status; granted-vs-MVP scopes; live `courses.list()` check |
-| `GET /classroom/authorize` | Start consent; `?next=` and optional `?scopes=` (subset for incremental grants) |
-| `GET /classroom/callback` | OAuth callback: state check → code exchange → email match → store |
-| `POST /classroom/disconnect` | Forget the stored Google credential |
+| `GET /classroom` | Connection status (broker-derived: Connected / Not connected / error states, granted scopes, live `courses.list()` check) |
 
-## 6. Deployment checklist (human-in-the-loop)
+The legacy in-app OAuth flow (`GET /classroom/authorize`,
+`GET /classroom/callback`, `POST /classroom/disconnect`, Flask-session
+token storage, app-owned `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) was
+**removed on 2026-10-03** once the broker path was proven live (issue #30
+Retire lane).
 
-1. **Google Cloud Console** (app's project, `GOOGLE_CLOUD_PROJECT_ID`):
-   - Enable the **Google Classroom API**.
-   - OAuth consent screen: Internal (Workspace) is sufficient for a
-     private deployment; add the MVP scopes above. While the app is in
-     *Testing* status, Google shows an unverified-app warning unless the
-     user is a test user — Marketplace/Marketplace-sdk registration
-     (#11) is what makes this a properly installed private app.
-   - On the OAuth client (`GOOGLE_CLIENT_ID`), register the redirect URI
-     **exactly**: `{PUBLIC_URL}/classroom/callback` — locally
-     `http://localhost:5000/classroom/callback`, on Railway
-     `https://campus-classroom-development.up.railway.app/classroom/callback`.
-2. **Env**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-   `WORKSPACE_DOMAIN` (see `.env.example`). `PUBLIC_URL` already drives
-   the callback URL via `campus.common.utils.url.full_url_for`.
-3. Smoke test: sign in → `/classroom` → Connect → consent → courses list.
+## 5. Deployment checklist
 
-## 7. Tests
+1. **Campus side** (owned by campus.auth, not this repo): the
+   `google.classroom` vault label seeded (CLIENT_ID/SECRET/SCOPES/
+   CONNECT_TARGETS); this app's campus client flagged `token_bridge=true`
+   with a non-empty `upstream_scopes["google.classroom"]` allowlist.
+2. **Env for this app**: the usual `SECRET_KEY`/`CLIENT_ID`/`CLIENT_SECRET`/
+   `ENV`/`PUBLIC_URL` — **no Google vars**. Optional
+   `CAMPUS_PROFILE_URL` (ENV-derived otherwise) for the reconnect links.
+3. Smoke test: sign in → connect via the campus-profile integrations page
+   → `/classroom` shows Connected + live courses.
 
-`scripts/verify_issue_30.py` (post-broker-swap, the authoritative seam
-check) runs the broker release against a local stub of campus.auth's broker
-+ the Classroom API: bearer/min_scopes on the wire, nothing-persisted,
-campus-credential refresh, proactive + 401-triggered re-release, the full
-error mapping (404→NotConnected, 403 missing_scopes, 401→re-login,
-400→loud BrokerConfigError), the send-scope vault-cap gate, and the
-/classroom page states. `scripts/verify_issue_9.py` retains the LEGACY
-in-app flow checks (authorize-URL composition, CSRF refusal, email
-mismatch, cancelled consent, disconnect).
+## 6. Tests
+
+`scripts/verify_issue_30.py` runs the seam against a local stub of
+campus.auth's broker + the Classroom API (no network, no real account):
+bearer/min_scopes on the wire, nothing-persisted, campus-credential
+refresh, proactive + 401-triggered re-release, the full error mapping,
+the send-scope local gate, and the `/classroom` page states.
+`scripts/verify_issue_10.py` covers the send flow on the same harness.
+(The pre-broker `verify_issue_9.py` was deleted with the legacy flow it
+verified; its history lives in issue #9 / PR #17/#20.)

@@ -52,6 +52,7 @@
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
 const assignmentId = {{ assignment_id | tojson }};
+const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
 let assignment = null;
 let editing = false;
 
@@ -252,23 +253,19 @@ let pickerModal = null;
 let pickerCourses = [];
 let pickerCourseNames = {};
 
-function classroomAuthorizeUrl(missing) {
-    // Back to this page after the incremental consent screen.
-    const params = new URLSearchParams({ next: window.location.pathname });
-    if (missing && missing.length) params.set('scopes', missing.join(' '));
-    return `/classroom/authorize?${params.toString()}`;
-}
-
 function showPickerError(err) {
     const box = document.getElementById('picker-error');
     const e = (err && err.error) || {};
     let html;
-    if (e.code === 'classroom_not_connected') {
+    if (e.code === 'classroom_not_connected' || e.code === 'classroom_missing_scopes') {
+        // Google Classroom tokens are held by campus.auth (issue #30);
+        // connecting/reconnecting happens once on the profile page.
+        const target = e.reconnect_url || PROFILE_INTEGRATIONS_URL;
+        const label = e.code === 'classroom_not_connected'
+            ? 'Connect Google Classroom' : 'Reconnect on the Campus profile page';
         html = `${escapeHtml(e.message)}
-            <a href="${classroomAuthorizeUrl()}" class="btn btn-sm btn-primary mt-2">Connect Google Classroom</a>`;
-    } else if (e.code === 'classroom_missing_scopes') {
-        html = `${escapeHtml(e.message)}
-            <a href="${classroomAuthorizeUrl(e.missing_scopes)}" class="btn btn-sm btn-primary mt-2">Grant permission</a>`;
+            <a href="${escapeHtml(target)}" target="_blank" rel="noopener"
+               class="btn btn-sm btn-primary mt-2">${label}</a>`;
     } else {
         html = escapeHtml(e.message || 'Could not reach Google Classroom.');
     }

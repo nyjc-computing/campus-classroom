@@ -24,11 +24,6 @@ Architecture (docs/auth-bridge.md has the full rationale):
 - Identity mapping is enforced campus-side at connect time (consenting
   Google email must equal the campus session user), so the release path
   needs no local identity check.
-- LEGACY (issue #30 retire lane, removed once the broker path is proven):
-  the app's own Google OAuth flow (`/classroom/authorize|callback` +
-  Flask-session token storage) is kept working through the transition,
-  but `with_classroom_session()` no longer reads or writes it —
-  session-stored Google credentials are dead weight until removal.
 """
 
 from __future__ import annotations
@@ -37,7 +32,6 @@ import os
 import time
 from contextlib import contextmanager
 from typing import Iterator
-from urllib.parse import urlencode
 
 import flask
 import requests
@@ -45,9 +39,9 @@ from campus_python.errors import APIError as CampusClientError
 
 # --- Scope inventory (PRD §6.4 MVP set, issue #9) ---------------------------
 
-# Identity scopes: enforced campus-side for the integration connect flow
-# (part of the google.classroom vault SCOPES cap); the legacy in-app flow
-# below still uses them for its own email match.
+# Identity scopes: not requested by any classroom call, but part of the
+# google.classroom vault grant (enforced campus-side at connect), so they
+# stay in the broker ask-floor below for documentation.
 GOOGLE_IDENTITY_SCOPES = (
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
@@ -98,12 +92,6 @@ CLASSROOM_SCOPES_SEND = (
     "https://www.googleapis.com/auth/classroom.coursework.students",
 )
 
-# Google endpoints (legacy in-app flow only). Module-level so the test
-# harness can stub them.
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-CLASSROOM_API_BASE = "https://classroom.googleapis.com"
 
 # Refresh the access token this many seconds before it actually expires.
 _EXPIRY_SKEW_SECONDS = 60
@@ -113,8 +101,9 @@ _CAPABILITY_PREVIEW_VERSION = "V1_20240930_PREVIEW"
 
 _HTTP_TIMEOUT = 30
 
-# Flask session key of the LEGACY stored Google credential (retire lane).
-_CREDENTIALS_KEY = "classroom_credentials"
+# Google Classroom REST API root (the only Google endpoint this app calls
+# directly; tokens for it come from the campus.auth broker).
+CLASSROOM_API_BASE = "https://classroom.googleapis.com"
 
 # --- campus.auth token broker (issue #30) -------------------------------------
 
@@ -170,22 +159,6 @@ class ClassroomAuthError(Exception):
         self.message = message
 
 
-class GoogleNotConfiguredError(ClassroomAuthError):
-    """GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing from the environment.
-
-    Legacy in-app flow only; the broker path has no Google config of its
-    own (campus.auth holds the integration's client).
-    """
-
-    code = "google_not_configured"
-
-    def __init__(self):
-        super().__init__(
-            "Google Classroom sign-in is not configured. Set GOOGLE_CLIENT_ID "
-            "and GOOGLE_CLIENT_SECRET in the environment (see .env.example)."
-        )
-
-
 class NotConnectedError(ClassroomAuthError):
     """campus.auth holds no google.classroom credential for the user."""
 
@@ -218,6 +191,13 @@ class MissingClassroomScopesError(ClassroomAuthError):
         )
 
 
+class OAuthFlowError(ClassroomAuthError):
+    """The campus.auth broker could not be reached or returned a response
+    that does not carry a usable access token."""
+
+    code = "classroom_oauth_flow_error"
+
+
 class CampusSessionExpiredError(ClassroomAuthError):
     """The user's Campus login session cannot back a broker release.
 
@@ -245,33 +225,6 @@ class BrokerConfigError(ClassroomAuthError):
     code = "classroom_broker_config"
 
 
-class IdentityMismatchError(ClassroomAuthError):
-    """Google account email does not match the Campus user's email.
-
-    Legacy in-app flow only (the broker path enforces this campus-side at
-    connect). Raised during the OAuth callback; the refusal is intentional
-    and loud.
-    """
-
-    code = "classroom_identity_mismatch"
-
-    def __init__(self, campus_email: str, google_email: str):
-        self.campus_email = campus_email
-        self.google_email = google_email
-        super().__init__(
-            f"Refused: Google account '{google_email}' does not match your "
-            f"Campus account '{campus_email}'. Sign in to Google with your "
-            "school account."
-        )
-
-
-class OAuthFlowError(ClassroomAuthError):
-    """The legacy OAuth token/userinfo exchange failed, or the campus.auth
-    broker could not be reached or returned a malformed response."""
-
-    code = "classroom_oauth_flow_error"
-
-
 class ClassroomAPIError(ClassroomAuthError):
     """A Classroom REST API call failed after any token-refresh retry."""
 
@@ -280,33 +233,6 @@ class ClassroomAPIError(ClassroomAuthError):
     def __init__(self, status_code: int, detail: str):
         self.status_code = status_code
         super().__init__(f"Classroom API call failed ({status_code}): {detail}")
-
-
-# --- LEGACY credential storage (Flask session; issue #30 retire lane) --------
-#
-# Read/written only by the legacy /classroom/authorize|callback flow below.
-# with_classroom_session() no longer touches any of this.
-
-def get_stored_credentials() -> dict | None:
-    """Return the current user's stored Google credential dict, or None."""
-    creds = flask.session.get(_CREDENTIALS_KEY)
-    if creds and creds.get("access_token"):
-        return dict(creds)
-    return None
-
-
-def store_credentials(creds: dict) -> None:
-    """Persist a Google credential dict into the Flask session.
-
-    Replaces the whole key (rather than mutating in place) so Flask marks
-    the session modified and re-signs the cookie.
-    """
-    flask.session[_CREDENTIALS_KEY] = dict(creds)
-
-
-def clear_credentials() -> None:
-    """Forget the current user's Google credential, if any."""
-    flask.session.pop(_CREDENTIALS_KEY, None)
 
 
 def missing_scopes(required, granted) -> list[str]:
@@ -424,155 +350,6 @@ def fetch_broker_credential(min_scopes: list[str] | None = None) -> dict:
         "scopes": sorted(str(data.get("scope") or "").split()),
         "email": str(data.get("user_id") or ""),
     }
-
-
-# --- LEGACY Google OAuth flow (issue #30 retire lane) --------------------------
-#
-# Kept working through the broker transition; removed once the broker path
-# is proven (see issue #30 "Retire"). Not used by with_classroom_session().
-
-def _google_client_config() -> tuple[str, str]:
-    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-    if not (client_id and client_secret):
-        raise GoogleNotConfiguredError()
-    return client_id, client_secret
-
-
-def build_authorization_url(
-        redirect_uri: str,
-        scopes,
-        state: str,
-        login_hint: str | None = None,
-) -> str:
-    """Build the Google consent URL for an incremental authorization.
-
-    access_type=offline gets a refresh token; include_granted_scopes=true
-    merges previously granted scopes into the new grant (Google's
-    incremental authorization); prompt=consent guarantees the response
-    carries a fresh refresh token even when the user has an existing
-    Google session.
-    """
-    client_id, _ = _google_client_config()
-    params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": " ".join(scopes),
-        "access_type": "offline",
-        "include_granted_scopes": "true",
-        "prompt": "consent",
-        "state": state,
-    }
-    if login_hint:
-        params["login_hint"] = login_hint
-    workspace_domain = os.environ.get("WORKSPACE_DOMAIN", "")
-    if workspace_domain:
-        params["hd"] = workspace_domain
-    return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
-
-
-def exchange_code(code: str, redirect_uri: str) -> dict:
-    """Exchange an authorization code for a Google token payload."""
-    client_id, client_secret = _google_client_config()
-    resp = requests.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        },
-        timeout=_HTTP_TIMEOUT,
-    )
-    if not resp.ok:
-        raise OAuthFlowError(
-            f"Google rejected the authorization code ({resp.status_code}). "
-            "Try connecting again."
-        )
-    return resp.json()
-
-
-def refresh_access_token(refresh_token: str) -> dict:
-    """Exchange a refresh token for a fresh access token."""
-    client_id, client_secret = _google_client_config()
-    resp = requests.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "refresh_token": refresh_token,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "refresh_token",
-        },
-        timeout=_HTTP_TIMEOUT,
-    )
-    if not resp.ok:
-        raise OAuthFlowError(
-            "Google Classroom connection expired. Reconnect your "
-            "Google account."
-        )
-    return resp.json()
-
-
-def fetch_userinfo(access_token: str) -> dict:
-    """Fetch the Google account profile for an access token."""
-    resp = requests.get(
-        GOOGLE_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=_HTTP_TIMEOUT,
-    )
-    if not resp.ok:
-        raise OAuthFlowError("Could not read the Google account profile.")
-    return resp.json()
-
-
-def connect_from_callback(code: str, redirect_uri: str) -> dict:
-    """Complete the OAuth callback: exchange, verify identity, store.
-
-    Enforces the Google↔Campus identity mapping (verified Google email must
-    equal the Campus user's email) before anything is persisted. Returns the
-    stored credential dict.
-    """
-    campus_email = campus_user_email()
-    token = exchange_code(code, redirect_uri)
-    userinfo = fetch_userinfo(token["access_token"])
-
-    google_email = (userinfo.get("email") or "").strip().lower()
-    if not google_email or not userinfo.get("email_verified", False):
-        raise OAuthFlowError(
-            "Google did not return a verified email address for your "
-            "account; connection refused."
-        )
-    if google_email != campus_email.strip().lower():
-        raise IdentityMismatchError(campus_email, google_email)
-
-    scopes = set((token.get("scope") or "").split())
-    creds = {
-        "access_token": token["access_token"],
-        "refresh_token": token.get("refresh_token", ""),
-        "expires_at": time.time() + int(token.get("expires_in", 3600)),
-        "scopes": sorted(s for s in scopes if s),
-        "email": google_email,
-    }
-    if not creds["refresh_token"]:
-        # prompt=consent makes this unlikely; refuse rather than store a
-        # credential we cannot refresh.
-        raise OAuthFlowError(
-            "Google did not return a refresh token; connection refused. "
-            "Try connecting again."
-        )
-    store_credentials(creds)
-    return creds
-
-
-def campus_user_email() -> str:
-    """Email of the Campus-authenticated user (identity anchor)."""
-    user = getattr(flask.g, "user", None)
-    email = getattr(user, "email", None) or getattr(user, "id", None)
-    if not email:
-        raise ClassroomAuthError("No Campus user is signed in.")
-    return str(email)
 
 
 # --- Classroom API client ------------------------------------------------------
