@@ -1,8 +1,11 @@
 """Verification for issue #10: Send to Google Classroom (PRD §6.7, GC-8).
 
 Runs the send-to-Classroom flow end-to-end against a local stub of the
-Classroom REST API plus an in-memory fake Campus store (no network, no
-real Google account):
+Classroom REST API plus an in-memory fake Campus store whose auth.broker
+token release is scriptable (issue #34 re-seam: PR #33 moved the release
+onto `auth.broker.token(...)` inside `campus.with_user_session()`, so the
+fake user session now yields a client carrying that broker — no broker
+server, no network, no real Google account):
 
 1. Course picker source: GET /api/v1/classroom/courses lists the teacher's
    courses (courses.list, teacherMe).
@@ -21,8 +24,9 @@ real Google account):
 7. Not connected / missing coursework-students scope: 403 JSON naming the
    missing scope with the campus-profile reconnect_url.
 8. Input validation (empty course_ids -> 400) and ownership (403).
-9. /a/{assignment_id} renders publicly (no Campus login), shows the
-   assignment, sends no X-Frame-Options header; unknown id -> 404.
+9. /a/{assignment_id} is gated per PRD v1.3 (never public): anonymous
+   visitors go to sign-in, signed-in non-owners get the 403 gate page, the
+   owner gets render-only content with no X-Frame-Options; unknown id -> 404.
 10. view.html renders the picker modal; the alert() stub is gone.
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_10.py
@@ -42,12 +46,12 @@ from urllib.parse import parse_qs, urlsplit
 os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-10-secret"
 
-import campus_python  # noqa: E402
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
 import flask  # noqa: E402
 import requests  # noqa: E402
 import requests.adapters  # noqa: E402
 from campus.model import Assignment, ClassroomLink  # noqa: E402
+from campus_python import errors as campus_errors  # noqa: E402
 from urllib3.util.retry import Retry  # noqa: E402
 
 from apps.classroom import classroom_auth as cauth  # noqa: E402
@@ -222,58 +226,35 @@ cauth.CLASSROOM_API_BASE = f"http://127.0.0.1:{server.server_address[1]}"
 
 
 # ---------------------------------------------------------------------------
-# Stub campus.auth token broker (issue #30 seam; scriptable grant state)
+# Fake campus.auth broker on the Campus stub (issue #34 re-seam; the retired
+# StubBroker HTTP server becomes a scriptable in-memory auth.broker resource)
 # ---------------------------------------------------------------------------
-class StubBroker(BaseHTTPRequestHandler):
+class FakeBroker:
+    """auth.broker stand-in releasing a google.classroom token whose scope
+    is the scripted `granted` list; 404 (NotFoundError, the class the
+    client's raise_for_status raises) when "disconnected"."""
 
-    """campus.auth broker releasing a google.classroom token whose scope is
-    the scripted `granted` list; 404 when "disconnected"."""
-    protocol_version = "HTTP/1.1"
-
-    granted: list = []
     connected: bool = False
+    granted: list = []
 
-    def log_message(self, *args):
-        pass
-
-    def _send(self, payload, status=200):
-        body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        if length:
-            self.rfile.read(length)  # drain: keep-alive breaks on unread bodies
-        if urlsplit(self.path).path != cauth.BROKER_PATH:
-            self._send({"error": {"code": "NOT_FOUND", "message": "no route"}}, 404)
-            return
-        if not self.connected:
-            self._send({
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": f"No google.classroom credential for user "
-                               f"{CAMPUS_EMAIL}; complete the Classroom connect "
-                               "flow first (via the app's integrations page)",
-                    "details": {}, "request_id": None,
-                }
-            }, 404)
-            return
-        self._send({
+    def token(self, provider, integration, *, min_scopes=None):
+        assert (provider, integration) == ("google", "classroom"), (
+            provider, integration)
+        if not type(self).connected:
+            raise campus_errors.NotFoundError(
+                404,
+                f"No google.classroom credential for user {CAMPUS_EMAIL}; "
+                "complete the Classroom connect flow first (via the "
+                "campus-profile integrations page)",
+                details={})
+        return {
             "provider": "google.classroom",
             "user_id": CAMPUS_EMAIL,
             "access_token": "broker-access-1",
             "token_type": "Bearer",
             "expires_in": 3600,
-            "scope": " ".join(self.granted),
-        })
-
-
-broker_server = ThreadingHTTPServer(("127.0.0.1", 0), StubBroker)
-threading.Thread(target=broker_server.serve_forever, daemon=True).start()
+            "scope": " ".join(type(self).granted),
+        }
 
 
 def reset_stub():
@@ -348,11 +329,8 @@ class FakeAssignments:
         return FakeAssignmentHandle(assignment_id)
 
 
-FAKE_CAMPUS = SimpleNamespace(api=SimpleNamespace(assignments=FakeAssignments()))
-
-
 @contextmanager
-def fake_user_session(self):
+def fake_user_session():
     yield FAKE_CAMPUS
 
 
@@ -360,14 +338,21 @@ APP_SESSION_OK = True  # toggled to simulate deployments without the grant
 
 
 @contextmanager
-def fake_app_session(self):
+def fake_app_session():
     if not APP_SESSION_OK:
         raise RuntimeError("campus auth: no client_credentials grant")
     yield FAKE_CAMPUS
 
 
-campus_python.Campus.with_user_session = fake_user_session
-campus_python.Campus.with_app_session = fake_app_session
+# flask.current_app.campus: one fake client for everything — the data
+# routes see .api.assignments, the broker seam sees .auth.broker, and the
+# session flavors mirror the Campus client's context managers.
+FAKE_CAMPUS = SimpleNamespace(
+    api=SimpleNamespace(assignments=FakeAssignments()),
+    auth=SimpleNamespace(broker=FakeBroker()),
+    with_user_session=fake_user_session,
+    with_app_session=fake_app_session,
+)
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
@@ -383,32 +368,7 @@ campus_auth_v1.AuthRoot.push_context = _fake_push_context
 
 app = create_app()
 app.testing = True  # propagate exceptions: verify, not serve
-
-
-class FakeCampusAuth:
-    """campus.auth stand-in for the seam: fresh bearer, stub broker base."""
-
-    def __init__(self):
-        self.client = SimpleNamespace(
-            base_url=f"http://127.0.0.1:{broker_server.server_address[1]}")
-
-    def get_token(self):
-        return SimpleNamespace(
-            id="cat-1", access_token="cat-1", refresh_token="crt-1",
-            is_expired=lambda: False)
-
-
-class SeamCampus:
-    """flask.current_app.campus: fake auth for the seam plus the
-    class-patched fake user/app sessions for the data routes."""
-
-    with_user_session = campus_python.Campus.with_user_session
-    with_app_session = campus_python.Campus.with_app_session
-
-
-seam_campus = SeamCampus()
-seam_campus.auth = FakeCampusAuth()
-app.campus = seam_campus
+app.campus = FAKE_CAMPUS
 
 
 def seed_user(client, email=CAMPUS_EMAIL):
@@ -416,17 +376,16 @@ def seed_user(client, email=CAMPUS_EMAIL):
         sess["verify_user"] = {"id": email, "email": email}
 
 
-def seed_credentials(client, scopes, *, expires_at=None):
-    """Connect the (global) stub broker grant; `client`/`expires_at` are
-    legacy parameters from the pre-#30 session-seeding signature."""
-    StubBroker.granted = list(scopes)
-    StubBroker.connected = True
+def seed_credentials(scopes):
+    """Connect the fake broker grant: releases answer with these scopes."""
+    FakeBroker.granted = list(scopes)
+    FakeBroker.connected = True
 
 
 def revoke_credentials():
-    """Disconnect the stub broker: releases start answering 404."""
-    StubBroker.granted = []
-    StubBroker.connected = False
+    """Disconnect the fake broker: releases start answering 404."""
+    FakeBroker.granted = []
+    FakeBroker.connected = False
 
 
 def stored_links(assignment_id):
@@ -446,7 +405,7 @@ client = app.test_client()
 # 1. Course picker source
 # ---------------------------------------------------------------------------
 seed_user(client)
-seed_credentials(client, ALL_SCOPES)
+seed_credentials(ALL_SCOPES)
 resp = client.get("/api/v1/classroom/courses")
 check("courses endpoint returns 200", resp.status_code == 200, str(resp.status_code))
 courses = resp.get_json()["courses"]
@@ -635,7 +594,7 @@ check("not-connected send returns 403 JSON",
 
 client_scope = app.test_client()
 seed_user(client_scope)
-seed_credentials(client_scope, cauth.CLASSROOM_SCOPES_MVP)  # no write scope
+seed_credentials(cauth.CLASSROOM_SCOPES_MVP)  # no write scope
 resp = client_scope.post(
     "/api/v1/assignments/a_eligible/classroom/send",
     json={"course_ids": ["course_111"]},
@@ -653,7 +612,7 @@ check("error carries the profile-page reconnect_url",
 # ---------------------------------------------------------------------------
 # 7. Input validation + ownership
 # ---------------------------------------------------------------------------
-seed_credentials(client, ALL_SCOPES)  # back from section 6's disconnect
+seed_credentials(ALL_SCOPES)  # back from section 6's disconnect
 resp = client.post(
     "/api/v1/assignments/a_eligible/classroom/send", json={"course_ids": []})
 check("empty course_ids -> 400", resp.status_code == 400)
@@ -670,11 +629,25 @@ resp = client.post(
 check("unknown assignment -> 404", resp.status_code == 404)
 
 # ---------------------------------------------------------------------------
-# 8. /a/{assignment_id}: public, render-only, iframe-friendly
+# 8. /a/{assignment_id}: gated per PRD v1.3 — never public, owner-only
 # ---------------------------------------------------------------------------
 client_public = app.test_client()  # deliberately no Campus login
 resp = client_public.get("/a/a_eligible")
-check("share page renders without login", resp.status_code == 200,
+check("anonymous share visit is sent to sign-in (content never public)",
+      resp.status_code == 302
+      and resp.headers["Location"].endswith("/sign-in"),
+      f"{resp.status_code} {resp.headers.get('Location')}")
+
+client_foreign = app.test_client()
+seed_user(client_foreign, OTHER_EMAIL)
+resp = client_foreign.get("/a/a_eligible")
+check("signed-in non-owner gets the 403 gate page, no assignment content",
+      resp.status_code == 403
+      and "Verify me" not in resp.get_data(as_text=True),
+      f"{resp.status_code} {resp.get_data(as_text=True)[:200]}")
+
+resp = client.get("/a/a_eligible")  # the owner's session
+check("owner share page renders", resp.status_code == 200,
       str(resp.status_code))
 html = resp.get_data(as_text=True)
 check("share page shows the assignment content",
@@ -682,7 +655,7 @@ check("share page shows the assignment content",
 check("share page sends no X-Frame-Options header",
       "X-Frame-Options" not in resp.headers,
       str(dict(resp.headers)))
-resp = client_public.get("/a/does-not-exist")
+resp = client.get("/a/does-not-exist")
 check("unknown share id -> 404", resp.status_code == 404)
 
 # Dev-deployment reality: with_app_session has no client_credentials grant
