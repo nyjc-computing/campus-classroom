@@ -250,16 +250,25 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
-            # Build update payload
+            # Build update payload. An explicit submitted_at null is an
+            # unsubmit: update() cannot express null (None means "omit"
+            # there), so it goes through the library's unsubmit(),
+            # which PATCHes the explicit null the server expects
+            # (campus-api-python#78; was a latent ValueError here).
             updates = {}
             if "responses" in data:
                 updates["responses"] = data["responses"]
             if "feedback" in data:
                 updates["feedback"] = data["feedback"]
-            if "submitted_at" in data:
-                updates["submitted_at"] = data["submitted_at"]
 
-            client.api.submissions[submission_id].update(**updates)
+            if "submitted_at" in data:
+                if data["submitted_at"] is None:
+                    client.api.submissions[submission_id].unsubmit()
+                else:
+                    updates["submitted_at"] = data["submitted_at"]
+
+            if updates:
+                client.api.submissions[submission_id].update(**updates)
             updated = client.api.submissions[submission_id].get()
 
         return flask.jsonify(updated.to_resource())
@@ -421,8 +430,12 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
-            # To unsubmit, we clear the submitted_at timestamp
-            client.api.submissions[submission_id].update(submitted_at=None)
+            # Clearing submitted_at needs an explicit null, which
+            # update() cannot express (None means "omit" there — the
+            # old call raised the client's own ValueError and 500ed
+            # before sending anything). The library's unsubmit()
+            # PATCHes {"submitted_at": null} (campus-api-python#78).
+            client.api.submissions[submission_id].unsubmit()
             updated = client.api.submissions[submission_id].get()
 
         return flask.jsonify(updated.to_resource())
