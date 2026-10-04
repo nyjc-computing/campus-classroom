@@ -10,14 +10,16 @@ access token from campus.auth's token broker so other sessions can call
 
 Architecture (docs/auth-bridge.md has the full rationale):
 
-- Token release: `with_classroom_session()` POSTs
-  `{campus.auth}/auth/v1/broker/google/classroom/` with the user's campus
-  bearer token (the one the app already holds from its campus login
-  session). The broker answers with a live access token, its expiry and
-  its scope — never a refresh token. When it nears expiry the app simply
-  asks the broker again (campus refreshes its stored credential silently
-  server-side). Tokens live in memory for at most one request's
-  duration; nothing is persisted anywhere.
+- Token release: `with_classroom_session()` asks the campus.auth token
+  broker through the client library (`auth.broker.token("google",
+  "classroom", ...)`, api#82) inside the user's campus session
+  (`campus.with_user_session()`, which resolves the campus bearer the
+  broker requires and refreshes it when expired). The broker answers
+  with a live access token, its expiry and its scope — never a refresh
+  token. When it nears expiry the app simply asks the broker again
+  (campus refreshes its stored credential silently server-side).
+  Tokens live in memory for at most one request's duration; nothing is
+  persisted anywhere.
 - Connecting: the user grants the `google.classroom` integration once via
   the campus-profile integrations page (campus.auth's connect flow). This
   app has no connect UX of its own; NotConnectedError points there.
@@ -35,7 +37,12 @@ from typing import Iterator
 
 import flask
 import requests
-from campus_python.errors import APIError as CampusClientError
+from campus_python.errors import (
+    APIError as CampusClientError,
+    AuthenticationError as CampusAuthenticationError,
+    MalformedResponseError as CampusMalformedResponseError,
+    NotFoundError as CampusNotFoundError,
+)
 
 # --- Scope inventory (PRD §6.4 MVP set, issue #9) ---------------------------
 
@@ -105,12 +112,7 @@ _HTTP_TIMEOUT = 30
 # directly; tokens for it come from the campus.auth broker).
 CLASSROOM_API_BASE = "https://classroom.googleapis.com"
 
-# --- campus.auth token broker (issue #30) -------------------------------------
-
-# campus.auth route that releases the user's google.classroom access
-# token (campus#733 Phase 1, live on dev via campus#741). Module-level so
-# the verify harness can retarget it at a stub.
-BROKER_PATH = "/auth/v1/broker/google/classroom/"
+# --- campus.auth token broker (issue #30, library resource api#82) -----------
 
 # Scopes the broker may be ASKED for: deliberately the conservative set
 # (MVP + identity) even though the dev vault's observed cap is wider
@@ -241,95 +243,69 @@ def missing_scopes(required, granted) -> list[str]:
     return [scope for scope in required if scope not in granted_set]
 
 
-# --- campus.auth broker access (issue #30) -------------------------------------
+# --- campus.auth broker access (issue #30, library resource api#82) -----------
 
-def _broker_url() -> str:
-    """Full campus.auth broker URL, from the app's Campus client."""
-    campus = flask.current_app.campus
-    return campus.auth.client.base_url.rstrip("/") + BROKER_PATH
+def _broker_error(err: CampusClientError) -> ClassroomAuthError:
+    """Translate a library APIError from the broker release into the app
+    error the routes translate for users (issue #30 semantics preserved):
 
-
-def _campus_bearer() -> str:
-    """The signed-in user's campus access token, refreshed when expired.
-
-    Public SDK surface only: `auth.get_token()` returns the stored campus
-    credential as-is (the SDK does not auto-refresh yet), so an expired
-    token is refreshed here the same way Campus._get_token_from_session
-    does. Any SDK auth failure maps to CampusSessionExpiredError — the
-    remedy is a fresh campus sign-in, not a retry.
-    """
-    auth = flask.current_app.campus.auth
-    try:
-        token = auth.get_token()
-        if token.is_expired():
-            login = auth.logins.from_session()
-            token = auth.token(
-                grant_type="refresh_token",
-                refresh_token=token.refresh_token,
-            )
-            auth.credentials["campus"][login.user_id].update(token=token)
-    except CampusClientError as err:
-        raise CampusSessionExpiredError() from err
-    return token.access_token
-
-
-def _broker_release(min_scopes: list[str]) -> dict:
-    """POST the campus.auth broker for the user's google.classroom token.
-
-    Error mapping (issue #30, semantics preserved for callers):
         404 no connected credential   -> NotConnectedError (profile pointer)
-        403 + details.missing_scopes  -> MissingClassroomScopesError
         401 bad/expired campus bearer -> CampusSessionExpiredError (re-login)
+        403 + details.missing_scopes  -> MissingClassroomScopesError
         400 AUTH_INVALID_SCOPE / other 403 -> BrokerConfigError, logged
             loudly: an allowlist/vault-cap/bridge-flag mismatch is a
             deployment configuration bug and must not be swallowed.
     """
+    if isinstance(err, CampusNotFoundError):
+        return NotConnectedError()
+    if isinstance(err, CampusAuthenticationError):
+        return CampusSessionExpiredError()
+    missing = (err.details or {}).get("missing_scopes")
+    if missing:
+        return MissingClassroomScopesError(list(missing), [])
+    flask.current_app.logger.error(
+        "campus.auth broker rejected the google.classroom release "
+        "(HTTP %s, %s): %s",
+        err.status_code, err.error or "no error code", err,
+    )
+    return BrokerConfigError(
+        "Campus refused the Classroom token request "
+        f"(HTTP {err.status_code}, {err.error or 'no error code'}); this is a "
+        "deployment configuration problem."
+    )
+
+
+def _broker_release(min_scopes: list[str]) -> dict:
+    """Release the user's google.classroom token via the client library.
+
+    `campus.with_user_session()` supplies the campus bearer the broker
+    requires, refreshing an expired one itself — the dance the retired
+    `_campus_bearer()` used to hand-roll. Transport failures and
+    unusable releases map to OAuthFlowError; APIErrors go through
+    `_broker_error` so callers keep their issue #30 error contract.
+    """
+    campus = flask.current_app.campus
     try:
-        resp = requests.post(
-            _broker_url(),
-            json={"min_scopes": list(min_scopes)} if min_scopes else {},
-            headers={"Authorization": f"Bearer {_campus_bearer()}"},
-            timeout=_HTTP_TIMEOUT,
-        )
+        with campus.with_user_session() as client:
+            data = client.auth.broker.token(
+                "google", "classroom", min_scopes=min_scopes or None,
+            )
+    except CampusMalformedResponseError as err:
+        raise OAuthFlowError(
+            "Campus token broker returned a malformed response."
+        ) from err
+    except CampusClientError as err:
+        raise _broker_error(err) from err
     except requests.RequestException as err:
         raise OAuthFlowError(
             "Could not reach the Campus token broker; try again shortly."
         ) from err
 
-    if resp.ok:
-        try:
-            return resp.json()
-        except ValueError as err:
-            raise OAuthFlowError(
-                "Campus token broker returned a malformed response."
-            ) from err
-    if resp.status_code == 404:
-        raise NotConnectedError()
-    if resp.status_code == 401:
-        raise CampusSessionExpiredError()
-
-    body: dict = {}
-    if resp.content:
-        try:
-            body = resp.json()
-        except ValueError:
-            body = {}
-    error = body.get("error") if isinstance(body, dict) else None
-    details = error.get("details", {}) if isinstance(error, dict) else {}
-    code = error.get("code", "") if isinstance(error, dict) else ""
-    missing = details.get("missing_scopes") if isinstance(details, dict) else None
-    if resp.status_code == 403 and missing:
-        raise MissingClassroomScopesError(list(missing), [])
-
-    flask.current_app.logger.error(
-        "campus.auth broker rejected the google.classroom release "
-        "(HTTP %s, %s): %s", resp.status_code, code or "no error code", body,
-    )
-    raise BrokerConfigError(
-        "Campus refused the Classroom token request "
-        f"(HTTP {resp.status_code}, {code or 'no error code'}); this is a "
-        "deployment configuration problem."
-    )
+    if not isinstance(data, dict) or not data.get("access_token"):
+        raise OAuthFlowError(
+            "Campus token broker returned a malformed response."
+        )
+    return data
 
 
 def fetch_broker_credential(min_scopes: list[str] | None = None) -> dict:
