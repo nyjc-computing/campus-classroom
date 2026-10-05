@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import campus_python
 import flask
 from campus import flask_campus
+from campus.common import env
 
 from . import classroom_auth as cauth
 from . import routes
@@ -25,6 +26,20 @@ def create_app():
         static_folder="static",
         static_url_path="/static"
     )
+
+    # Trace producer (campus#816 item 2, issue #37): record classroom
+    # requests as audit spans, and let SDK calls made while handling a
+    # request carry trace context so they land as child spans (the
+    # campus_python session instrumentation reads the flask.g state this
+    # middleware stashes). Opt-in: needs AUDIT_API_KEY; see campus
+    # docs/audit-tracing.md. Read once at app creation — flipping the
+    # flag is a redeploy, not a runtime change. Ingestion is async and
+    # fail-safe: a missing or broken audit key only loses spans.
+    if env.get_flag("AUDIT_TRACING_ENABLED", False):
+        from campus.audit.middleware import init_app as init_audit_tracing
+
+        init_audit_tracing(app)
+
     campus = campus_python.Campus(timeout=60)
 
     # Configure Flask secret key from environment

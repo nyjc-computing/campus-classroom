@@ -31,6 +31,16 @@ Early development. Login page implemented; assignment creation and Classroom int
 
 4. **Visit:** http://localhost:5000
 
+## Audit tracing (optional)
+
+Set `AUDIT_TRACING_ENABLED=1` and `AUDIT_API_KEY=<producer key>` to make
+classroom a campus audit trace producer (campus#816): classroom requests
+are recorded as spans and campus SDK calls made while handling a request
+land as child spans, so the audit waterfall shows which classroom route
+fired each campus call. Key minting and the producer runbook live in the
+campus repo's `docs/audit-tracing.md`. Tracing is fail-safe — without a
+valid key only spans are lost, never requests.
+
 ## Project Structure
 
 ```
