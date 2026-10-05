@@ -40,6 +40,18 @@ def create_app():
 
         init_audit_tracing(app)
 
+    # Action journeys (campus#828): one user-initiated episode — the
+    # page load that began it, its XHRs and form posts, and the
+    # server-to-server calls they spawn — groups as one journey in the
+    # audit UI. Full lifecycle here: navigations mint (classroom serves
+    # pages); journeys ride the sliding campus_action_journey cookie,
+    # and SDK calls forward them. The @flask_campus.journey decorator
+    # names action boundaries as routes warrant.
+
+    from campus.audit.middleware import init_journeys
+
+    init_journeys(app)
+
     campus = campus_python.Campus(timeout=60)
 
     # Configure Flask secret key from environment
