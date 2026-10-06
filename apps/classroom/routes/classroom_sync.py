@@ -11,6 +11,7 @@ missing_scopes + authorize_url for the incremental re-consent redirect).
 """
 
 import flask
+from campus import flask_campus
 
 from .. import classroom_auth as cauth
 from .. import classroom_sync as csync
@@ -41,6 +42,11 @@ def register_routes(app: flask.Flask, login_manager):
 
     @app.post("/api/v1/assignments/<assignment_id>/classroom/send")
     @login_manager.login_required
+    # Canonical journey-name example (#840): the label is the yapper
+    # emission this action culminates in — campus.api emits
+    # campus.submissions.submit when the Link Material fallback stores
+    # the submission — so the audit UI shows the episode by that name.
+    @flask_campus.journey("campus.submissions.submit")
     def api_send_to_classroom(assignment_id: str, **_):
         """Post this assignment to the selected Classroom courses.
 
