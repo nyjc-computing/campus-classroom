@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # No ruff job yet: the codebase predates the [tool.ruff] config in
+  # pyproject.toml (44 violations at the pinned version) — adopt a lint
+  # gate only after a cleanup pass.
+  smoke:
+    name: Smoke Test (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    env:
+      # Dummy credentials: campus_python reads CLIENT_ID/CLIENT_SECRET at
+      # import time and create_app requires SECRET_KEY; no network calls
+      # happen before the smoke assertions.
+      SECRET_KEY: ci-smoke
+      CLIENT_ID: ci-dummy
+      CLIENT_SECRET: ci-dummy
+      PUBLIC_URL: http://localhost:5000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          # Configure Poetry to use system Python (not its own bundled version)
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+      - name: Install dependencies
+        run: poetry install --no-root
+      - name: Verify app factory and routes
+        run: |
+          poetry run python - <<'EOF'
+          from apps.classroom import create_app
+
+          app = create_app()
+          rules = {str(rule) for rule in app.url_map.iter_rules()}
+          assert "/" in rules, "landing route missing"
+          print(f"App OK: {len(rules)} routes registered")
+          EOF
