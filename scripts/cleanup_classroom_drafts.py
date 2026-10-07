@@ -1,9 +1,13 @@
 """One-off cleanup: delete campus-classroom test drafts from Google Classroom.
 
 Deletes draft CourseWork posts created during smoke/E2E testing from the
-dev test courses (CampusClass 888684407230, JC1 828477607889), matched by
-title prefix ("E2E gate check" / "Issue 10"). Everything is listed first
-and printed before deletion.
+dev TEST course (CampusClass 888684407230), matched by title prefix
+("E2E gate check" / "Issue 10"). Everything is listed first and printed
+before deletion.
+
+POLICY (live-classroom-policy): only TEST classrooms may be targeted —
+never the live JC1/JC2 classes. If another test course is needed, have
+it created and add its id here.
 
 Sign-in: RFC 8628 device flow against campus.auth (same as
 verify_test_account_roles.py) — the browser leg must be the STAFF test
@@ -36,7 +40,7 @@ MIN_SCOPES = [
     "https://www.googleapis.com/auth/classroom.courses.readonly",
 ]
 TITLE_PREFIXES = ("E2E gate check", "Issue 10")
-COURSES = ["888684407230", "828477607889"]
+COURSES = ["888684407230"]  # TEST course only — never the live JC1/JC2 classes
 
 
 def load_dotenv() -> dict[str, str]:
