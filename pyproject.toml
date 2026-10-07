@@ -7,7 +7,9 @@ readme = "README.md"
 packages = [{include = "apps/classroom"}]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.12"
+# Security tier (3.11-3.13): officially supported and CI-required.
+# 3.14 (bugfix tier) is not yet supported here.
+python = ">=3.11,<3.14"
 flask = "^3.0.0"
 python-dotenv = "^1.2.1"
 
