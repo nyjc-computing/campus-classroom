@@ -171,7 +171,7 @@ def poll_for_token(
             url,
             headers={"Authorization": auth_header},
             body={
-                "grant_type": "urn:ietf:params:oauth:grant-type=device_code",
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 "client_id": client_id,
                 "device_code": device["device_code"],
             },
