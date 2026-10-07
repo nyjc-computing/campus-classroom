@@ -1,8 +1,10 @@
-"""Verification for issue #28 (route-layer authorization, few-lines slice):
-PRD v1.3 rules enforced in campus-classroom's own routes.
+"""Verification for issue #28 (route-layer authorization, PRD v1.3 rules
+enforced in campus-classroom's own routes).
 
-Covers exactly what this slice implements (no Google/Classroom stubs
-needed — all checks are pure ownership/visibility comparisons):
+Covers the ownership/visibility slice (PR #29) and the enrollment slice
+(this change — the Classroom bridge is faked at its two seams, the
+campus.auth broker release and the Classroom REST `courses.list`, so no
+network and no real Google account are involved):
 
 1. /a/{id} share gate: anonymous → 302 sign-in; owner → 200 with
    content; signed-in non-owner → 403 gate page with no content;
@@ -16,10 +18,18 @@ needed — all checks are pure ownership/visibility comparisons):
    assignment-owner only; by-student → self only; generic list →
    student_id forced/rejected, assignment_id filter requires ownership.
    Submission mutations already had student_id checks (not re-tested).
+4. Enrollment gate (PRD v1.3 rules 2+3):
+   /a/{id} renders for a signed-in student enrolled in a linked course;
+   an unenrolled student still gets the 403 gate; a signed-in user
+   without a google.classroom connection gets the connect prompt
+   (403 + CTA, no content).
+   POST /api/v1/submissions requires enrollment (unknown assignment →
+   404, unenrolled → 403 not_enrolled, disconnected → classroom
+   not-connected 403 JSON); submission mutations (responses, submit,
+   unsubmit, update, delete) require it too — an enrollment revoked
+   after creation closes the attempt. Reads are unchanged.
 
-Enrollment-dependent checks (assigned-student rendering on /a/,
-attempt/submit enrollment, assigned-only student listing) are NOT
-covered here — they stay in #28 pending the Classroom bridge.
+Assigned-only student listing (rule 4) stays with #14 (Student View).
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_28.py
 """
@@ -35,7 +45,9 @@ os.environ["SECRET_KEY"] = "verify-issue-28-secret"
 
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
 import flask  # noqa: E402
+from campus_python import errors as campus_errors  # noqa: E402
 
+from apps.classroom import classroom_auth as cauth  # noqa: E402
 from apps.classroom import create_app  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -71,12 +83,14 @@ class FakeSubmission:
         self.student_id = student_id
         self.course_id = course_id
         self.responses = []
+        self.submitted_at = None
 
     def to_resource(self):
         return {
             "id": self.id, "assignment_id": self.assignment_id,
             "student_id": self.student_id, "course_id": self.course_id,
             "responses": self.responses,
+            "submitted_at": self.submitted_at,
         }
 
 
@@ -115,6 +129,16 @@ class FakeSubmissions:
     def __getitem__(self, submission_id):
         store, calls = self._store, self._calls
 
+        class _Responses:
+            def add(self, question_id, response_text):
+                item = store.get(submission_id)
+                if item is None:
+                    raise _not_found("Submission")
+                item.responses.append({
+                    "question_id": question_id,
+                    "response_text": response_text,
+                })
+
         class _Handle:
             def get(self):
                 calls.append(("submissions.get", submission_id))
@@ -123,7 +147,46 @@ class FakeSubmissions:
                     raise _not_found("Submission")
                 return item
 
+            @property
+            def responses(self):
+                return _Responses()
+
+            def update(self, **updates):
+                item = store.get(submission_id)
+                if item is None:
+                    raise _not_found("Submission")
+                for key, value in updates.items():
+                    setattr(item, key, value)
+
+            def submit(self):
+                item = store.get(submission_id)
+                if item is None:
+                    raise _not_found("Submission")
+                item.submitted_at = "2026-10-07T00:00:00Z"
+
+            def unsubmit(self):
+                item = store.get(submission_id)
+                if item is None:
+                    raise _not_found("Submission")
+                item.submitted_at = None
+
+            def delete(self):
+                if submission_id not in store:
+                    raise _not_found("Submission")
+                del store[submission_id]
+
         return _Handle()
+
+    def new(self, assignment_id, student_id, course_id, responses=None):
+        self._calls.append(("submissions.new", {
+            "assignment_id": assignment_id, "student_id": student_id,
+        }))
+        submission_id = f"s-new-{len(self._store) + 1}"
+        item = FakeSubmission(submission_id, assignment_id, student_id, course_id)
+        if responses:
+            item.responses = responses
+        self._store[submission_id] = item
+        return item
 
     def list(self, assignment_id=None, student_id=None, course_id=None):
         self._calls.append(("submissions.list", {
@@ -151,6 +214,52 @@ class FakeAPI:
         self.submissions = submissions
 
 
+# --- Fake auth bridge seams -------------------------------------------------
+# The enrollment check talks to two seams: campus.auth's broker release
+# (campus.with_user_session() → auth.broker.token) and the Classroom REST
+# courses.list (ClassroomClient.request). Both are faked here — keyed by
+# the signed-in user's email, which the fake user session publishes.
+
+CURRENT_EMAIL: str | None = None
+BROKER_CONNECTED_BY_EMAIL: dict[str, bool] = {}
+COURSES_BY_EMAIL: dict[str, list[dict]] = {}
+
+
+class FakeBroker:
+    """auth.broker stand-in: releases a courses.readonly-scoped token for
+    the signed-in user, or 404s (NotFoundError, the class the client
+    library raises) when that user is scripted as disconnected."""
+
+    def token(self, provider, integration, *, min_scopes=None):
+        assert (provider, integration) == ("google", "classroom")
+        email = CURRENT_EMAIL
+        if not BROKER_CONNECTED_BY_EMAIL.get(email, True):
+            raise campus_errors.NotFoundError(
+                404,
+                f"No google.classroom credential for user {email}; "
+                "complete the Classroom connect flow first (via the "
+                "campus-profile integrations page)",
+                details={},
+            )
+        return {
+            "provider": "google.classroom",
+            "user_id": email,
+            "access_token": "broker-access-1",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": " ".join([
+                "https://www.googleapis.com/auth/classroom.courses.readonly",
+            ]),
+        }
+
+
+def _fake_classroom_request(self, method, path, *, params=None, json=None):
+    """ClassroomClient.request stand-in: courses.list per signed-in user."""
+    self._access_token()  # mirror the real flow: release before the call
+    assert path == "v1/courses", f"unexpected Classroom path {path!r}"
+    return {"courses": COURSES_BY_EMAIL.get(self._creds["email"], [])}
+
+
 class FakeCampus:
     """Stands in for campus_python.Campus; both session flavors yield self."""
 
@@ -159,6 +268,7 @@ class FakeCampus:
             FakeAssignments(assignments, calls),
             FakeSubmissions(submissions, calls),
         )
+        self.auth = SimpleNamespace(broker=FakeBroker())
 
     @contextmanager
     def with_app_session(self):
@@ -166,12 +276,18 @@ class FakeCampus:
 
     @contextmanager
     def with_user_session(self):
-        yield self
+        global CURRENT_EMAIL
+        CURRENT_EMAIL = getattr(flask.g.get("user"), "email", None)
+        try:
+            yield self
+        finally:
+            CURRENT_EMAIL = None
 
 
 ASSIGNMENTS = {
     "a1": FakeAssignment("a1", TEACHER, "Teacher One Assignment"),
     "a2": FakeAssignment("a2", OTHER_TEACHER, "Teacher Two Assignment"),
+    "a3": FakeAssignment("a3", TEACHER, "Unlinked Assignment"),
 }
 SUBMISSIONS = {
     "s1": FakeSubmission("s1", "a1", STUDENT),
@@ -180,6 +296,10 @@ SUBMISSIONS = {
 }
 CALLS = []
 FAKE_CAMPUS = FakeCampus(ASSIGNMENTS, SUBMISSIONS, CALLS)
+
+# Classroom bridge scripting: who is connected, and whose courses.list
+# returns what. (STUDENT is in course-1, STUDENT2 only in course-2.)
+cauth.ClassroomClient.request = _fake_classroom_request
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +381,7 @@ CALLS.clear()
 r = teacher_client.get("/api/v1/assignments")
 check("assignment list returns only own assignments",
       r.status_code == 200
-      and [a["id"] for a in r.get_json()] == ["a1"],
+      and [a["id"] for a in r.get_json()] == ["a1", "a3"],
       f"status={r.status_code} body={r.get_json()}")
 check("assignment list forced to created_by=me (client filter ignored)",
       CALLS and CALLS[0] == ("assignments.list", {"created_by": TEACHER}),
@@ -346,6 +466,140 @@ check("by-student listing answers 404 for another student",
 r = teacher_client.get("/api/v1/submissions/by-student/uid-user-student")
 check("by-student listing answers 404 for a teacher (review is by-assignment)",
       r.status_code == 404, f"status={r.status_code}")
+
+# --- 4. Enrollment gate (PRD v1.3 rules 2+3) -------------------------------
+# Script the Classroom bridge: STUDENT is in course-1, STUDENT2 only in
+# course-2, the teachers in neither (owner checks short-circuit before
+# the bridge anyway). Then link a1 to course-1.
+STAFF_EMAIL = f"{TEACHER}@nyjc.edu.sg"
+OTHER_EMAIL = f"{OTHER_TEACHER}@nyjc.edu.sg"
+STUDENT_EMAIL = f"{STUDENT}@nyjc.edu.sg"
+STUDENT2_EMAIL = f"{STUDENT2}@nyjc.edu.sg"
+COURSES_BY_EMAIL.update({
+    STUDENT_EMAIL: [{"id": "course-1", "name": "CampusClass"}],
+    STUDENT2_EMAIL: [{"id": "course-2", "name": "Other Class"}],
+})
+ASSIGNMENTS["a1"].classroom_links = [
+    SimpleNamespace(course_id="course-1", coursework_id="cw-1")
+]
+
+r = student_client.get("/a/a1")
+check("enrolled student /a/ renders content",
+      r.status_code == 200 and b"Teacher One Assignment" in r.data,
+      f"status={r.status_code}")
+
+r = student2_client = app.test_client()
+seed_user(student2_client, STUDENT2)
+r = student2_client.get("/a/a1")
+check("unenrolled student /a/ still gets the 403 gate page",
+      r.status_code == 403, f"status={r.status_code}")
+check("gate page leaks no assignment content (unenrolled)",
+      b"Teacher One Assignment" not in r.data)
+
+BROKER_CONNECTED_BY_EMAIL[OTHER_EMAIL] = False
+r = teacher2_client.get("/a/a1")
+check("signed-in user without a google.classroom connection gets the "
+      "connect prompt (403)",
+      r.status_code == 403 and b"Connect" in r.data, f"status={r.status_code}")
+check("connect prompt leaks no assignment content",
+      b"Teacher One Assignment" not in r.data)
+del BROKER_CONNECTED_BY_EMAIL[OTHER_EMAIL]
+
+# Rule 3: attempt/submit. Create.
+r = student_client.post("/api/v1/submissions", json={
+    "assignment_id": "a1", "course_id": "course-1",
+})
+check("enrolled student creates a submission (201)",
+      r.status_code == 201 and r.get_json()["assignment_id"] == "a1",
+      f"status={r.status_code} body={r.get_json()}")
+new_submission_id = (r.get_json() or {}).get("id")
+
+r = student_client.post("/api/v1/submissions", json={
+    "assignment_id": "missing", "course_id": "course-1",
+})
+check("creating a submission for an unknown assignment answers 404",
+      r.status_code == 404, f"status={r.status_code}")
+
+r = student2_client.post("/api/v1/submissions", json={
+    "assignment_id": "a1", "course_id": "course-2",
+})
+check("unenrolled student's attempt answers 403 not_enrolled",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+r = student2_client.post("/api/v1/submissions", json={
+    "assignment_id": "a3", "course_id": "course-2",
+})
+check("attempt on an assignment with no classroom_links answers 403",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+BROKER_CONNECTED_BY_EMAIL[STUDENT2_EMAIL] = False
+r = student2_client.post("/api/v1/submissions", json={
+    "assignment_id": "a1", "course_id": "course-2",
+})
+check("attempt without a google.classroom connection answers the "
+      "not-connected 403 JSON",
+      r.status_code == 403
+      and r.get_json().get("error", {}).get("code") == "classroom_not_connected",
+      f"status={r.status_code} body={r.get_json()}")
+del BROKER_CONNECTED_BY_EMAIL[STUDENT2_EMAIL]
+
+# Rule 3: mutations on an existing submission.
+r = student_client.post(f"/api/v1/submissions/{new_submission_id}/responses",
+                        json={"question_id": "q1", "response_text": "answer"})
+check("enrolled student adds a response (200)",
+      r.status_code == 200, f"status={r.status_code} body={r.get_json()}")
+
+r = student_client.post(f"/api/v1/submissions/{new_submission_id}/submit")
+check("enrolled student submits (200)",
+      r.status_code == 200, f"status={r.status_code} body={r.get_json()}")
+
+r = student_client.patch(f"/api/v1/submissions/{new_submission_id}",
+                         json={"responses": [{"question_id": "q1",
+                                              "response_text": "revised"}]})
+check("enrolled student updates their submission (200)",
+      r.status_code == 200, f"status={r.status_code} body={r.get_json()}")
+
+r = student_client.post(f"/api/v1/submissions/{new_submission_id}/unsubmit")
+check("enrolled student unsubmits (200)",
+      r.status_code == 200, f"status={r.status_code} body={r.get_json()}")
+
+# s3 is STUDENT2's own submission on a1 — but STUDENT2 is only in
+# course-2, so a revoked/absent enrollment closes the attempt too.
+r = student2_client.post("/api/v1/submissions/s3/responses",
+                         json={"question_id": "q1", "response_text": "x"})
+check("unenrolled student cannot add responses (403 not_enrolled)",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+r = student2_client.post("/api/v1/submissions/s3/submit")
+check("unenrolled student cannot submit (403 not_enrolled)",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+r = student2_client.delete("/api/v1/submissions/s3")
+check("unenrolled student cannot delete their submission (403 not_enrolled)",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+r = student2_client.patch("/api/v1/submissions/s3",
+                          json={"responses": []})
+check("unenrolled student cannot update their submission (403 not_enrolled)",
+      r.status_code == 403
+      and r.get_json().get("code") == "not_enrolled",
+      f"status={r.status_code} body={r.get_json()}")
+
+# Reads stay open to the submission's student regardless of enrollment.
+r = student_client.get("/api/v1/submissions/s2")
+check("student still reads their own submission on an unlinked assignment",
+      r.status_code == 200 and r.get_json()["id"] == "s2",
+      f"status={r.status_code}")
 
 
 print()
