@@ -3,11 +3,40 @@
 API routes for Submission resources.
 
 All data is stored via Campus API - no local database.
+
+Attempt/submit authorization (PRD v1.3 rule 3, #28): creating or
+mutating a submission requires the signed-in student to be a member of
+a Google Classroom course the assignment is linked to (checked against
+their live Classroom courses via the auth bridge). Reads keep the
+ownership rules from the #29 slice; teacher feedback stays per §6.11
+(any teacher of the course — enforcement is future work, not a #28
+rule).
 """
 
 import flask
 
 import campus.model
+
+from .. import enrollment
+
+
+def _enrollment_denied():
+    """The rule-3 response for an unenrolled student's attempt/submit."""
+    return flask.jsonify({
+        "error": "This assignment was not sent to any of your Google "
+                 "Classroom courses, so it cannot be attempted or submitted.",
+        "code": "not_enrolled",
+    }), 403
+
+
+def _load_assignment(client, assignment_id):
+    """Fetch an assignment through the user session (None on 404)."""
+    try:
+        return client.api.assignments[assignment_id].get()
+    except Exception as e:
+        if "not found" in str(e).lower():
+            return None
+        raise
 
 
 def register_routes(app: flask.Flask, login_manager):
@@ -77,6 +106,12 @@ def register_routes(app: flask.Flask, login_manager):
             - course_id: Google Classroom course ID (required)
             - responses: Array of response objects (optional)
 
+        Only students enrolled in a course the assignment is linked to
+        may attempt it (PRD v1.3 rule 3, #28): unknown assignments 404,
+        unenrolled callers 403, and a missing google.classroom
+        connection surfaces as the auth-bridge 403 JSON with the
+        campus-profile connect URL.
+
         Returns:
             Created submission as JSON
         """
@@ -94,6 +129,12 @@ def register_routes(app: flask.Flask, login_manager):
             return flask.jsonify({"error": "course_id is required"}), 400
 
         with campus.with_user_session() as client:
+            assignment = _load_assignment(client, data["assignment_id"])
+            if assignment is None:
+                return flask.jsonify({"error": "Assignment not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
+
             submission = client.api.submissions.new(
                 assignment_id=data["assignment_id"],
                 student_id=user_id,
@@ -250,6 +291,15 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
+            # Rule 3 (#28): the student must still be enrolled in a
+            # linked course — an enrollment revoked after creation
+            # closes the attempt too.
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
+
             # Build update payload. An explicit submitted_at null is an
             # unsubmit: update() cannot express null (None means "omit"
             # there), so it goes through the library's unsubmit(),
@@ -295,6 +345,12 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
+
             client.api.submissions[submission_id].delete()
 
         return "", 204
@@ -334,6 +390,12 @@ def register_routes(app: flask.Flask, login_manager):
 
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
+
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
 
             client.api.submissions[submission_id].responses.add(
                 question_id=data["question_id"],
@@ -403,6 +465,12 @@ def register_routes(app: flask.Flask, login_manager):
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
 
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
+
             client.api.submissions[submission_id].submit()
             updated = client.api.submissions[submission_id].get()
 
@@ -429,6 +497,12 @@ def register_routes(app: flask.Flask, login_manager):
 
             if str(current.student_id) != user_id:
                 return flask.jsonify({"error": "Forbidden"}), 403
+
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.is_enrolled(assignment):
+                return _enrollment_denied()
 
             # Clearing submitted_at needs an explicit null, which
             # update() cannot express (None means "omit" there — the

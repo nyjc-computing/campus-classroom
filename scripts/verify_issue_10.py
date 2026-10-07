@@ -629,7 +629,7 @@ resp = client.post(
 check("unknown assignment -> 404", resp.status_code == 404)
 
 # ---------------------------------------------------------------------------
-# 8. /a/{assignment_id}: gated per PRD v1.3 — never public, owner-only
+# 8. /a/{assignment_id}: gated per PRD v1.3 — owner or assigned class (#28)
 # ---------------------------------------------------------------------------
 client_public = app.test_client()  # deliberately no Campus login
 resp = client_public.get("/a/a_eligible")
@@ -641,10 +641,26 @@ check("anonymous share visit is sent to sign-in (content never public)",
 client_foreign = app.test_client()
 seed_user(client_foreign, OTHER_EMAIL)
 resp = client_foreign.get("/a/a_eligible")
-check("signed-in non-owner gets the 403 gate page, no assignment content",
+# PRD v1.3 rule 2 (#28): assignment content is owner-or-assigned-class.
+# The stub Classroom returns the same course list for every caller and
+# a_eligible is linked to course_111, so this signed-in "foreign"
+# visitor is a member of a linked class and renders — the pre-#28
+# owner-only expectation no longer holds.
+check("signed-in visitor in a linked course renders the share page (v1.3)",
+      resp.status_code == 200
+      and "Verify me" in resp.get_data(as_text=True),
+      f"{resp.status_code} {resp.get_data(as_text=True)[:200]}")
+
+# A signed-in visitor without a google.classroom connection gets the
+# connect prompt (deny + CTA), never content.
+revoke_credentials()
+resp = client_foreign.get("/a/a_eligible")
+check("signed-in visitor without a connection gets the connect prompt",
       resp.status_code == 403
+      and "Connect" in resp.get_data(as_text=True)
       and "Verify me" not in resp.get_data(as_text=True),
       f"{resp.status_code} {resp.get_data(as_text=True)[:200]}")
+seed_credentials([])
 
 resp = client.get("/a/a_eligible")  # the owner's session
 check("owner share page renders", resp.status_code == 200,

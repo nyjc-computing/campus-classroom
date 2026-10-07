@@ -13,6 +13,7 @@ from campus import flask_campus
 from campus.common import env
 
 from . import classroom_auth as cauth
+from . import enrollment
 from . import routes
 
 # Load environment variables from .env file
@@ -141,18 +142,20 @@ def create_app():
 
     # Shareable assignment page (PRD §6.9): the Link Material fallback posts
     # this URL into Classroom. Assignment content is never public (PRD v1.3
-    # rule 2): anonymous visitors are sent to sign-in, and signed-in users
-    # see content only if they own the assignment. Rendering for assigned
-    # students (classroom-membership check) lands with the enrollment work
-    # tracked in #28 — until then this page is owner-only.
+    # rule 2, #28): anonymous visitors are sent to sign-in; a signed-in
+    # visitor sees content if they own the assignment or are in a Google
+    # Classroom course the assignment is linked to (enrollment via the auth
+    # bridge); anyone else gets a 403 gate page with no assignment content.
+    # A signed-in visitor without a google.classroom connection gets a
+    # connect prompt (deny + CTA) instead of the bare gate.
     @app.get("/a/<assignment_id>")
     def assignment_share(assignment_id: str):
         """Gated render-only assignment page for the Link Material fallback.
 
         Primary read path is the app-scoped Campus session, falling back to
         the visitor's own Campus session if app scope is unavailable. The
-        visitor must be signed in and own the assignment; anyone else gets
-        a 403 gate page with no assignment content.
+        visitor must be signed in and either own the assignment or be
+        enrolled in one of its linked Classroom courses.
         """
         if getattr(flask.g, "user", None) is None:
             return flask.redirect(flask.url_for("sign_in"))
@@ -177,7 +180,22 @@ def create_app():
                 raise
 
         if str(getattr(assignment, "created_by", "")) != str(flask.g.user.id):
-            return flask.render_template("assignments/share_gated.html"), 403
+            # Non-owner: rule 2's assigned-student render. The enrollment
+            # check is fail-closed — bridge errors propagate to the
+            # app-wide handler (browser paths land on the connection
+            # page), except NotConnectedError, which gets the inline
+            # connect prompt.
+            try:
+                enrolled = enrollment.is_enrolled(assignment)
+            except cauth.NotConnectedError:
+                return flask.render_template(
+                    "assignments/share_connect.html",
+                    profile_integrations_url=(
+                        f"{cauth.profile_integrations_url()}/profile/integrations"
+                    ),
+                ), 403
+            if not enrolled:
+                return flask.render_template("assignments/share_gated.html"), 403
 
         return flask.render_template(
             "assignments/share.html",

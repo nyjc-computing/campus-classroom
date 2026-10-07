@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Connect Google Classroom{% endblock %}
+
+{% block content %}
+<div class="container-md mt-5">
+    <div class="card mx-auto" style="max-width: 34rem;">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-link-45deg display-5 text-muted mb-3"></i>
+            <h3 class="mb-3">Connect your Google Classroom first</h3>
+            <p class="text-muted mb-4">
+                Assignment content is shared through Google Classroom
+                membership, and your Campus account isn't linked to a
+                Google Classroom connection yet. Connect your school
+                Google account once, then reopen this page.
+            </p>
+            <a href="{{ profile_integrations_url }}"
+               class="btn btn-primary mb-2">
+                <i class="bi bi-google me-1"></i>Connect Google Classroom
+            </a>
+            <p class="text-muted small mb-0 mt-2">
+                Use the same Google account your class uses.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
