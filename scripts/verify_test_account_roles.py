@@ -191,9 +191,10 @@ def poll_for_token(
         if "slow_down" in errors:
             interval += 5  # RFC 8628 §3.5; server enforces the raised floor
             continue
+        error_label = next(iter(errors - {""}), "?")
         sys.exit(
             f"error: device token poll failed (HTTP {status}, "
-            f"{error}): {json.dumps(body)[:300]}"
+            f"{error_label}): {json.dumps(body)[:300]}"
         )
     sys.exit("error: device code expired before authorization completed.")
 
