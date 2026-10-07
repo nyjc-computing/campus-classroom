@@ -178,10 +178,17 @@ def poll_for_token(
         )
         if status == 200:
             return body["access_token"]
-        error = body.get("oauth_error") or body.get("error", {}).get("code", "")
-        if error == "authorization_pending":
+        envelope = body.get("error", {}) if isinstance(body, dict) else {}
+        # The Campus error envelope carries the RFC name in
+        # error.details.oauth_error; match on all spellings.
+        errors = {
+            str(body.get("oauth_error", "")),
+            str(envelope.get("code", "")).lower(),
+            str(envelope.get("details", {}).get("oauth_error", "")),
+        }
+        if "authorization_pending" in errors:
             continue
-        if error == "slow_down":
+        if "slow_down" in errors:
             interval += 5  # RFC 8628 §3.5; server enforces the raised floor
             continue
         sys.exit(
