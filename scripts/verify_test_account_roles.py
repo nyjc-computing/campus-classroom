@@ -8,40 +8,46 @@ Classroom API as each test account and reports whether it acts as a
 teacher and/or a student, so the account setup (staff=teacher,
 student=student) is verified where it actually matters.
 
-MANUAL PREREQUISITES (dev only — this script is never run in CI):
-  1. A campus.auth session cookie for the account, harvested from a
-     browser that is signed in to any Campus app on dev: DevTools →
-     Network → any campusauth-development.up.railway.app request →
-     copy the `Cookie:` request header. Put it in .env as
-     CAMPUS_AUTH_COOKIE_STAFF / CAMPUS_AUTH_COOKIE_STUDENT.
-     Note (campus#844): logging out of a Campus app does NOT end the
-     campus.auth session, so a harvested cookie keeps working until
-     the session is swept or expires — refresh it only when this
-     script reports a Google redirect.
-  2. The account's username in .env (CAMPUS_TEST_STAFF_USERNAME /
-     CAMPUS_TEST_STUDENT_USERNAME). The test-account PASSWORDS are
-     not used here: the script never does the Google leg — it rides
-     the campus.auth session cookie instead.
+HOW SIGN-IN WORKS (dev only — this script is never run in CI):
 
-Flow per role:
-  POST /auth/v1/sessions/campus/            (Basic = the app's own
-        confidential client credentials; returns the auth session,
-        including its pre-generated authorization_code)
-  GET  /auth/v1/authorize?...               (Cookie header = the
-        harvested campus.auth session; with a live session campus.auth
-        mints the code without visiting accounts.google.com — the
-        #844 behavior. If the chain reaches accounts.google.com the
-        cookie is dead: re-harvest.)
-  POST /auth/v1/token                       (server-to-server code
-        exchange; access token comes back in `id`)
-  POST /auth/v1/broker/google/classroom/    (releases the user's
-        stored upstream Google token; min_scopes=classroom.courses.readonly)
+  RFC 8628 device flow against campus.auth. The script prints a
+  verification URL; you open it in a browser, sign in AS the test
+  account, and confirm the user code. Since campus#846 the identity
+  login always stops at Google's account chooser (prompt=select_account),
+  so the account pick is explicit — no silent carry-over from whatever
+  the browser was signed in as before. The script then polls for the
+  Campus token, releases the account's stored google.classroom
+  credential via the token broker, and calls the Classroom API.
+
+  No passwords are needed here or anywhere: the browser leg is the
+  real Google login (test-account passwords live in .env only for
+  browser-driven E2E, which this script is not).
+
+PREREQUISITES:
+  1. The account has done the google.classroom connect flow at least
+     once on dev (campus-profile → integrations → Connect), so
+     campus.auth holds its upstream credential to release.
+  2. The releasing client — this app's CLIENT_ID from .env — is
+     confidential, token_bridge-flagged, has a non-empty
+     upstream_scopes entry for google.classroom, and its
+     allowed_scopes include the device-flow defaults ["read",
+     "write"] (the device grant hardcodes them). The dev client was
+     widened once on 2026-10-07; if the environment is rebuilt,
+     re-apply with the operator Basic credentials:
+       PATCH /auth/v1/clients/<client_id>/
+       {"allowed_scopes": ["campus.profile", "read", "write"]}
+
+FLOW:
+  POST /auth/v1/oauth/device_authorize   → device_code + verification URL
+  (browser: sign in as the test account, confirm code)
+  POST /auth/v1/oauth/token              (device_code grant poll;
+        access token in `access_token`)
+  POST /auth/v1/broker/google/classroom/ (Bearer user token; releases
+        the upstream Google token; min_scopes=classroom.courses.readonly)
   GET  classroom.googleapis.com/v1/courses?teacherId=me / studentId=me
 
-The released Google token and the Campus token are held in memory
-only (invariant D1) and never printed. Best-effort cleanup revokes
-the Campus access token at the end; the harvested cookie itself is
-left untouched.
+Tokens are held in memory only (invariant D1) and never printed.
+Cleanup revokes the Campus access token at the end.
 
 Usage:
   python scripts/verify_test_account_roles.py staff
@@ -56,6 +62,7 @@ import base64
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,7 +72,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 AUTH_BASE_DEFAULT = "https://campusauth-development.up.railway.app"
 COURSES_URL = "https://classroom.googleapis.com/v1/courses"
 MIN_SCOPES = ["https://www.googleapis.com/auth/classroom.courses.readonly"]
-MAX_AUTH_HOPS = 8
 
 
 def load_dotenv() -> dict[str, str]:
@@ -114,7 +120,7 @@ def http_json(
         all_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             return response.status, json.loads(response.read().decode())
     except urllib.error.HTTPError as err:
         raw = err.read().decode(errors="replace")
@@ -129,105 +135,79 @@ def basic_auth(user: str, secret: str) -> str:
     return f"Basic {encoded}"
 
 
-def exchange_code_for_campus_token(
-    *, auth_base: str, cookie: str, client_id: str, client_secret: str,
-    redirect_uri: str, session: dict,
-) -> dict:
-    """Run /authorize with the harvested cookie and exchange the code.
-
-    Returns the Campus token resource (access token string in `id`).
-    """
-    authorize_url = (
-        f"{auth_base}/auth/v1/authorize?"
-        + urllib.parse.urlencode({
-            "client_id": client_id,
-            "response_type": "code",
-            "redirect_uri": redirect_uri,
-            "state": session["id"],
-        })
+def request_device_code(auth_base: str, client_id: str) -> dict:
+    status, body = http_json(
+        "POST",
+        f"{auth_base}/auth/v1/oauth/device_authorize",
+        body={"client_id": client_id},
     )
-    code: str | None = None
-    url = authorize_url
-    for _ in range(MAX_AUTH_HOPS):
-        request = urllib.request.Request(url, headers={"Cookie": cookie})
-        # No-follow: chase Location headers manually so the final
-        # redirect_uri hop (which carries ?code=...) is not requested.
-        opener = urllib.request.build_opener(NoRedirect)
-        try:
-            with opener.open(request, timeout=30) as response:
-                location = response.headers.get("Location")
-                if response.status < 300 or not location:
-                    sys.exit(
-                        f"error: /authorize returned {response.status} "
-                        "without a redirect — unexpected; is the cookie "
-                        "from the right origin?"
-                    )
-        except urllib.error.HTTPError as err:
-            location = err.headers.get("Location")
-            if not location:
-                sys.exit(
-                    f"error: /authorize failed with HTTP {err.code}: "
-                    f"{err.read().decode(errors='replace')[:300]}"
-                )
-        if location.startswith(("http://accounts.google.com", "https://accounts.google.com")):
-            sys.exit(
-                "error: campus.auth bounced to Google sign-in — the "
-                "harvested CAMPUS_AUTH_COOKIE_… for this role is missing, "
-                "expired, or swept. Re-harvest it from a signed-in browser "
-                "(see module docstring)."
+    if status != 200:
+        hint = ""
+        if "AUTH_INVALID_SCOPE" in json.dumps(body):
+            hint = (
+                "\n  The client's allowed_scopes do not include the "
+                "device-flow defaults ['read', 'write']. Widen them (see "
+                "the module docstring)."
             )
-        if location.startswith(redirect_uri):
-            query = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
-            code = (query.get("code") or [None])[0]
-            break
-        url = location if location.startswith("http") else auth_base + location
-    if not code:
         sys.exit(
-            "error: redirect chain never reached the redirect_uri with a "
-            "code — inspect the chain manually."
+            f"error: device_authorize failed (HTTP {status}): "
+            f"{json.dumps(body)[:300]}{hint}"
         )
+    return body
 
-    candidates = [code]
-    pregenerated = session.get("authorization_code")
-    if pregenerated and pregenerated != code:
-        candidates.append(pregenerated)
-    last = None
-    for candidate in candidates:
-        status, token = http_json(
+
+def poll_for_token(
+    auth_base: str, client_id: str, client_secret: str, device: dict
+) -> str:
+    """Poll the device_code grant until authorized. Returns the access token."""
+    interval = int(device.get("interval", 5))
+    deadline = time.monotonic() + int(device.get("expires_in", 600)) + 10
+    auth_header = basic_auth(client_id, client_secret)
+    url = f"{auth_base}/auth/v1/oauth/token"
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        status, body = http_json(
             "POST",
-            f"{auth_base}/auth/v1/token",
-            headers={"Authorization": basic_auth(client_id, client_secret)},
+            url,
+            headers={"Authorization": auth_header},
             body={
-                "grant_type": "authorization_code",
-                "code": candidate,
-                "redirect_uri": redirect_uri,
+                "grant_type": "urn:ietf:params:oauth:grant-type=device_code",
                 "client_id": client_id,
-                "client_secret": client_secret,
+                "device_code": device["device_code"],
             },
         )
         if status == 200:
-            return token
-        last = (status, token)
-    status, body = last  # type: ignore[assignment]
-    sys.exit(f"error: code exchange failed (HTTP {status}): {json.dumps(body)[:300]}")
+            return body["access_token"]
+        error = body.get("oauth_error") or body.get("error", {}).get("code", "")
+        if error == "authorization_pending":
+            continue
+        if error == "slow_down":
+            interval += 5  # RFC 8628 §3.5; server enforces the raised floor
+            continue
+        sys.exit(
+            f"error: device token poll failed (HTTP {status}, "
+            f"{error}): {json.dumps(body)[:300]}"
+        )
+    sys.exit("error: device code expired before authorization completed.")
 
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def classroom_courses(google_token: str, *, role_param: str) -> tuple[int, list[dict]]:
+def classroom_courses(google_token: str, *, role_param: str) -> list[dict]:
     status, body = http_json(
         "GET",
         f"{COURSES_URL}?{role_param}=me&pageSize=20",
         headers={"Authorization": f"Bearer {google_token}"},
     )
     if status != 200:
-        detail = body.get("error", {}).get("message", json.dumps(body)[:200]) \
-            if isinstance(body, dict) else str(body)
-        sys.exit(f"error: courses.list ({role_param}=me) returned HTTP {status}: {detail}")
-    return status, body.get("courses", [])
+        detail = (
+            body.get("error", {}).get("message", json.dumps(body)[:200])
+            if isinstance(body, dict)
+            else str(body)
+        )
+        sys.exit(
+            f"error: courses.list ({role_param}=me) returned HTTP "
+            f"{status}: {detail}"
+        )
+    return body.get("courses", [])
 
 
 def describe_courses(courses: list[dict]) -> str:
@@ -246,56 +226,36 @@ def main() -> int:
 
     client_id = cfg("CLIENT_ID", required=True)
     client_secret = cfg("CLIENT_SECRET", required=True)
-    public_url = cfg("PUBLIC_URL", required=True).rstrip("/")
-    redirect_uri = cfg("CAMPUS_REDIRECT_URI", default=f"{public_url}/finalize_login")
     auth_base = cfg("CAMPUS_AUTH_BASE_URL", default=AUTH_BASE_DEFAULT).rstrip("/")
     expected_user = cfg(f"CAMPUS_TEST_{upper}_USERNAME", required=True)
-    cookie = cfg(f"CAMPUS_AUTH_COOKIE_{upper}", required=True)
 
     print(f"[{role}] expected account: {expected_user}")
 
-    # 1. Auth session (server-to-server, app's confidential client).
-    status, session = http_json(
-        "POST",
-        f"{auth_base}/auth/v1/sessions/campus/",
-        headers={"Authorization": basic_auth(client_id, client_secret)},
-        body={"client_id": client_id, "redirect_uri": redirect_uri},
+    # 1. Device flow: print the URL, wait for the browser authorization.
+    device = request_device_code(auth_base, client_id)
+    print(
+        f"[{role}] open this URL in a browser, sign in AS {expected_user}, "
+        "and confirm the code:"
     )
-    if status != 200:
-        sys.exit(f"error: session creation failed (HTTP {status}): {json.dumps(session)[:300]}")
-    print(f"[{role}] auth session created: {session.get('id', '?')}")
-
-    # 2-3. /authorize with the harvested cookie, then code exchange.
-    token = exchange_code_for_campus_token(
-        auth_base=auth_base,
-        cookie=cookie,
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=redirect_uri,
-        session=session,
+    print(f"  {device.get('verification_uri_complete') or device['verification_uri']}")
+    campus_access_token = poll_for_token(
+        auth_base, client_id, client_secret, device
     )
-    campus_access_token = token["id"]
-    actual_user = token.get("user_id", "?")
-    if actual_user != expected_user:
-        print(
-            f"[{role}] WARNING: token user_id is {actual_user}, expected "
-            f"{expected_user} — the cookie belongs to the wrong account. "
-            "Results below reflect the WRONG account."
-        )
 
-    # 4. Release the stored google.classroom credential via the broker.
+    # 2. Release the stored google.classroom credential via the broker.
     status, released = http_json(
         "POST",
         f"{auth_base}/auth/v1/broker/google/classroom/",
-        headers={
-            "Authorization": f"Bearer {campus_access_token}",
-        },
+        headers={"Authorization": f"Bearer {campus_access_token}"},
         body={"min_scopes": MIN_SCOPES},
     )
     if status != 200:
         hint = ""
         if status == 404:
-            hint = " (no google.classroom connection for this user — run the connect flow first)"
+            hint = (
+                " (no google.classroom connection for this user — run the "
+                "connect flow from campus-profile integrations first)"
+            )
         sys.exit(
             f"error: broker release failed (HTTP {status}){hint}: "
             f"{json.dumps(released)[:300]}"
@@ -308,13 +268,13 @@ def main() -> int:
         f"{MIN_SCOPES[0] in released.get('scope', '')})"
     )
 
-    # 5. Role evidence via the Classroom API.
-    _, as_teacher = classroom_courses(google_token, role_param="teacherId")
-    _, as_student = classroom_courses(google_token, role_param="studentId")
+    # 3. Role evidence via the Classroom API.
+    as_teacher = classroom_courses(google_token, role_param="teacherId")
+    as_student = classroom_courses(google_token, role_param="studentId")
     print(f"[{role}] courses as TEACHER : {describe_courses(as_teacher)}")
     print(f"[{role}] courses as STUDENT : {describe_courses(as_student)}")
 
-    # 6. Cleanup: revoke the Campus access token (best-effort).
+    # 4. Cleanup: revoke the Campus access token (best-effort).
     revoke_status, _ = http_json(
         "POST",
         f"{auth_base}/auth/v1/oauth/revoke",
@@ -325,8 +285,10 @@ def main() -> int:
 
     expected = as_teacher if role == "staff" else as_student
     if expected:
-        print(f"[{role}] PASS: account acts as Classroom {role} "
-              f"({len(expected)} course(s))")
+        print(
+            f"[{role}] PASS: account acts as Classroom {role} "
+            f"({len(expected)} course(s))"
+        )
         return 0
     print(
         f"[{role}] FAIL: no courses as {role}. Fix the account's role on "
