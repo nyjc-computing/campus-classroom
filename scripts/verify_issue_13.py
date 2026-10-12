@@ -34,9 +34,8 @@ os.environ["SECRET_KEY"] = "verify-issue-13-secret"
 os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-13-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-13-client-secret")
 
-import flask  # noqa: E402
-
 import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
+import flask  # noqa: E402
 
 from apps.classroom import create_app  # noqa: E402
 
@@ -53,7 +52,7 @@ def check(name, cond, detail=""):
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
-def _fake_push_context(self):
+def _fake_push_context(_self):
     flask.g.user = None
     flask.g.device = None
     user = flask.session.get("verify_user")

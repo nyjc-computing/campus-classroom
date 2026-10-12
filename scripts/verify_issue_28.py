@@ -230,7 +230,8 @@ class FakeBroker:
     the signed-in user, or 404s (NotFoundError, the class the client
     library raises) when that user is scripted as disconnected."""
 
-    def token(self, provider, integration, *, min_scopes=None):
+    # min_scopes is part of the real broker.token signature this stub mirrors
+    def token(self, provider, integration, *, min_scopes=None):  # noqa: ARG002
         assert (provider, integration) == ("google", "classroom")
         email = CURRENT_EMAIL
         if not BROKER_CONNECTED_BY_EMAIL.get(email, True):
@@ -253,7 +254,8 @@ class FakeBroker:
         }
 
 
-def _fake_classroom_request(self, method, path, *, params=None, json=None):
+# Signature mirrors ClassroomClient.request; callers pass params=/json= by keyword
+def _fake_classroom_request(self, method, path, *, params=None, json=None):  # noqa: ARG001
     """ClassroomClient.request stand-in: courses.list per signed-in user."""
     self._access_token()  # mirror the real flow: release before the call
     assert path == "v1/courses", f"unexpected Classroom path {path!r}"

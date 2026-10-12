@@ -39,8 +39,14 @@ import flask
 import requests
 from campus_python.errors import (
     APIError as CampusClientError,
+)
+from campus_python.errors import (
     AuthenticationError as CampusAuthenticationError,
+)
+from campus_python.errors import (
     MalformedResponseError as CampusMalformedResponseError,
+)
+from campus_python.errors import (
     NotFoundError as CampusNotFoundError,
 )
 
@@ -402,7 +408,9 @@ class ClassroomClient:
             raise ClassroomAPIError(resp.status_code, resp.text[:500])
         return resp.json() if resp.content else {}
 
-    def courses_list(self, *, page_size: int = 30, teacher_only: bool = False) -> list[dict]:
+    def courses_list(
+        self, *, page_size: int = 30, teacher_only: bool = False
+    ) -> list[dict]:
         """List the user's Classroom courses (courses.list).
 
         `teacher_only` uses teacherId=me — courses.list has no `teacherMe`
@@ -485,7 +493,9 @@ def with_classroom_session(
     Pass `required_scopes=()` to skip the scope gate for calls that only
     need whatever was granted.
     """
-    required = tuple(required_scopes) if required_scopes is not None else CLASSROOM_SCOPES_MVP
+    required = (
+        tuple(required_scopes) if required_scopes is not None else CLASSROOM_SCOPES_MVP
+    )
     client = ClassroomClient(required)
     client._ensure_token()
     try:

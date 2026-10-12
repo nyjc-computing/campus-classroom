@@ -97,7 +97,10 @@ def main() -> int:
         body={"client_id": client_id},
     )
     if status != 200:
-        sys.exit(f"error: device_authorize failed (HTTP {status}): {json.dumps(device)[:200]}")
+        sys.exit(
+            f"error: device_authorize failed (HTTP {status}): "
+            f"{json.dumps(device)[:200]}"
+        )
     print("[cleanup] open in a browser as the STAFF test account and confirm:")
     print(f"  {device.get('verification_uri_complete') or device['verification_uri']}")
 
@@ -138,7 +141,10 @@ def main() -> int:
         body={"min_scopes": MIN_SCOPES},
     )
     if status != 200:
-        sys.exit(f"error: broker release failed (HTTP {status}): {json.dumps(released)[:300]}")
+        sys.exit(
+            f"error: broker release failed (HTTP {status}): "
+            f"{json.dumps(released)[:300]}"
+        )
     google_token = released["access_token"]
     print("[cleanup] broker released google.classroom token (staff)")
 
@@ -151,7 +157,10 @@ def main() -> int:
             headers=headers,
         )
         if status != 200:
-            print(f"[cleanup] WARN: courseWork.list {course_id} -> HTTP {status}, skipping")
+            print(
+                f"[cleanup] WARN: courseWork.list {course_id} -> "
+                f"HTTP {status}, skipping"
+            )
             continue
         for work in body.get("courseWork", []):
             title = work.get("title", "")
@@ -159,7 +168,9 @@ def main() -> int:
                   f"(course {course_id}, coursework {work.get('id')}, "
                   f"state={work.get('state')})")
             if title.startswith(TITLE_PREFIXES):
-                targets.append({"courseId": course_id, "id": work["id"], "title": title})
+                targets.append(
+                    {"courseId": course_id, "id": work["id"], "title": title}
+                )
 
     if not targets:
         print("[cleanup] nothing to delete — no matching drafts found.")
@@ -179,7 +190,10 @@ def main() -> int:
             f"{CLASSROOM_API}/v1/courses/{t['courseId']}/courseWork/{t['id']}",
             headers=headers,
         )
-        label = "deleted" if status in (200, 204) else f"HTTP {status}: {json.dumps(body)[:150]}"
+        label = (
+            "deleted" if status in (200, 204)
+            else f"HTTP {status}: {json.dumps(body)[:150]}"
+        )
         print(f"[cleanup]   {t['title']} -> {label}")
         if status not in (200, 204):
             failures += 1

@@ -15,8 +15,6 @@ rule).
 
 import flask
 
-import campus.model
-
 from .. import enrollment
 
 
@@ -419,7 +417,6 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated submission as JSON
         """
-        user_id = flask.g.user.id
         campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
