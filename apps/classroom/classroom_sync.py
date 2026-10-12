@@ -103,7 +103,9 @@ def send_assignment_to_classroom(
     return outcomes
 
 
-def _send_to_course(campus_client, classroom, assignment, course_id, origin, share_url) -> dict:
+def _send_to_course(
+    campus_client, classroom, assignment, course_id, origin, share_url
+) -> dict:
     """Send one assignment to one course; never raises for API failures."""
     base = {
         "course_id": course_id,
@@ -172,7 +174,9 @@ def _send_to_course(campus_client, classroom, assignment, course_id, origin, sha
     )
 
 
-def _try_patch_link_material(classroom, course_id, coursework_id, share_url, title) -> bool:
+def _try_patch_link_material(
+    classroom, course_id, coursework_id, share_url, title
+) -> bool:
     """Best-effort: add a Link Material to an existing draft CourseWork."""
     try:
         classroom.coursework_patch(course_id, coursework_id, {

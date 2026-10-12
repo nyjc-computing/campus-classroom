@@ -7,8 +7,6 @@ These routes render within Google Classroom iframes.
 
 import flask
 
-import campus.model
-
 
 def register_routes(app: flask.Flask, login_manager):
     """Register iframe routes with the Flask app.

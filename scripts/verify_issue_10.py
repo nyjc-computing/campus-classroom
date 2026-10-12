@@ -39,7 +39,7 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 # Test environment must be in place before apps.classroom imports (its
 # load_dotenv() does not override variables that are already set).
@@ -182,7 +182,8 @@ class StubClassroom(BaseHTTPRequestHandler):
                         "courseId": course_id, **body})
             return
 
-        m = re.fullmatch(r"/v1/courses/([^/]+)/courseWork/([^/]+)/addOnAttachments", path)
+        m = re.fullmatch(
+            r"/v1/courses/([^/]+)/courseWork/([^/]+)/addOnAttachments", path)
         if m:
             course_id, coursework_id = m.group(1), m.group(2)
             if course_id in self.attachment_403:
@@ -237,7 +238,8 @@ class FakeBroker:
     connected: bool = False
     granted: list = []
 
-    def token(self, provider, integration, *, min_scopes=None):
+    # min_scopes is part of the real broker.token signature this stub mirrors
+    def token(self, provider, integration, *, min_scopes=None):  # noqa: ARG002
         assert (provider, integration) == ("google", "classroom"), (
             provider, integration)
         if not type(self).connected:
@@ -356,7 +358,7 @@ FAKE_CAMPUS = SimpleNamespace(
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
-def _fake_push_context(self):
+def _fake_push_context(_self):
     flask.g.user = None
     flask.g.device = None
     user = flask.session.get("verify_user")
@@ -453,8 +455,8 @@ check("attachment view URIs point at the deployed origin",
 
 links = stored_links("a_eligible")
 check("classroom_links stores every class (GC-8)",
-      {l.course_id for l in links} == {"course_111", "course_222"}
-      and all(l.coursework_id and l.attachment_id for l in links),
+      {link.course_id for link in links} == {"course_111", "course_222"}
+      and all(link.coursework_id and link.attachment_id for link in links),
       str(links))
 check("outcome carries coursework + attachment ids",
       all(r["coursework_id"] and r["attachment_id"] for r in results))

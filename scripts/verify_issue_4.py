@@ -11,9 +11,8 @@ Checks:
 4. new.html / view.html still render (template regression check).
 """
 
-import flask
-
 import campus.model
+import flask
 from campus_python.errors import APIError, FieldError, ValidationError
 
 from apps.classroom.routes.assignments import upstream_error_response
@@ -34,11 +33,13 @@ def check(name, cond, detail=""):
 # Simulates question-builder.js collectQuestions() + flattenQuestions() for a
 # representative nested assignment (q1 with subparts, plus a second question).
 builder_payload = [
-    {"id": "q1", "prompt": "Read the following passage...", "question": "What is the main theme?"},
+    {"id": "q1", "prompt": "Read the following passage...",
+     "question": "What is the main theme?"},
     {"id": "q1.a", "prompt": "", "question": "Identify two supporting details."},
     {"id": "q1.a.i", "prompt": "", "question": "Explain your first choice."},
     {"id": "q1.a.ii", "prompt": "", "question": "Explain your second choice."},
-    {"id": "q2", "prompt": "Consider the following scenario...", "question": "Analyze the cause and effect."},
+    {"id": "q2", "prompt": "Consider the following scenario...",
+     "question": "Analyze the cause and effect."},
 ]
 
 validated = []
@@ -47,7 +48,8 @@ for i, payload in enumerate(builder_payload):
         validated.append(campus.model.Question(**payload))
     except (TypeError, ValueError) as e:  # what upstream turns into 422
         check(f"builder payload questions[{i}] validates", False, str(e))
-check("all builder payloads match Question schema", len(validated) == len(builder_payload))
+check("all builder payloads match Question schema",
+      len(validated) == len(builder_payload))
 
 # Level-4 nesting (deepest the model docstring mentions) also allowed
 try:
@@ -60,10 +62,13 @@ except (TypeError, ValueError) as e:
 # 2. Malformed / legacy shapes are rejected (upstream would 422 these)
 # ---------------------------------------------------------------------------
 legacy_shapes = [
-    ("legacy question_id/question_text", {"question_id": "q1", "question_text": "What is 2+2?"}),
+    ("legacy question_id/question_text",
+     {"question_id": "q1", "question_text": "What is 2+2?"}),
     ("missing prompt", {"id": "q1", "question": "What is 2+2?"}),
-    ("renamed fields", {"questionId": "q1", "prompt": "", "questionText": "What is 2+2?"}),
-    ("invalid id format", {"id": "question 1", "prompt": "", "question": "What is 2+2?"}),
+    ("renamed fields",
+     {"questionId": "q1", "prompt": "", "questionText": "What is 2+2?"}),
+    ("invalid id format",
+     {"id": "question 1", "prompt": "", "question": "What is 2+2?"}),
 ]
 for name, payload in legacy_shapes:
     try:
@@ -89,14 +94,17 @@ with app.test_request_context():
     resp, status = upstream_error_response(err)
     body = resp.get_json()
     check("status passed through as 422", status == 422, str(status))
-    check("error.code == VALIDATION_FAILED", body["error"]["code"] == "VALIDATION_FAILED")
+    check("error.code == VALIDATION_FAILED",
+          body["error"]["code"] == "VALIDATION_FAILED")
     check("field error relayed", body["error"]["errors"][0]["field"] == "questions[0]")
-    check("constructor message relayed", "Invalid question ID format" in body["error"]["errors"][0]["message"])
+    check("constructor message relayed",
+          "Invalid question ID format" in body["error"]["errors"][0]["message"])
 
     # Non-validation APIError (e.g. upstream 500/409) keeps its status
     other = APIError(status_code=409, error_description="Conflict")
     _, other_status = upstream_error_response(other)
-    check("non-422 APIError keeps upstream status", other_status == 409, str(other_status))
+    check("non-422 APIError keeps upstream status",
+          other_status == 409, str(other_status))
 
 # ---------------------------------------------------------------------------
 # 4. Template render regression check
@@ -123,11 +131,13 @@ check("assignments/new.html renders", "Create New Assignment" in new_html)
 check("assignments/view.html renders", "assignment-container" in view_html)
 check(
     "new.html loads api-errors.js before question-builder.js",
-    new_html.find("api-errors.js") < new_html.find("question-builder.js") and new_html.find("api-errors.js") != -1,
+    new_html.find("api-errors.js") < new_html.find("question-builder.js")
+    and new_html.find("api-errors.js") != -1,
 )
 check(
     "view.html loads api-errors.js before question-builder.js",
-    view_html.find("api-errors.js") < view_html.find("question-builder.js") and view_html.find("api-errors.js") != -1,
+    view_html.find("api-errors.js") < view_html.find("question-builder.js")
+    and view_html.find("api-errors.js") != -1,
 )
 check("new.html uses formatApiError", "formatApiError(err" in new_html)
 check("view.html uses formatApiError", "formatApiError(err" in view_html)

@@ -5,10 +5,9 @@ API routes for Assignment resources.
 All data is stored via Campus API - no local database.
 """
 
-import flask
 from dataclasses import asdict
 
-import campus.model
+import flask
 from campus_python.errors import APIError
 
 
@@ -72,7 +71,6 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Created assignment as JSON
         """
-        user_id = flask.g.user.id
         campus = flask.current_app.campus
         data = flask.request.get_json()
 
@@ -203,9 +201,14 @@ def register_routes(app: flask.Flask, login_manager):
                 force = flask.request.args.get("force", "false").lower() == "true"
                 if not force:
                     return flask.jsonify({
-                        "error": f"Assignment is linked to {len(current.classroom_links)} Google Classroom class(es). "
-                                "Use ?force=true to confirm deletion.",
-                        "classroom_links": [asdict(link) for link in current.classroom_links],
+                        "error": (
+                            f"Assignment is linked to {len(current.classroom_links)} "
+                            "Google Classroom class(es). Use ?force=true to confirm "
+                            "deletion."
+                        ),
+                        "classroom_links": [
+                            asdict(link) for link in current.classroom_links
+                        ],
                     }), 409
 
             client.api.assignments[assignment_id].delete()
@@ -229,7 +232,9 @@ def register_routes(app: flask.Flask, login_manager):
         campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data or "course_id" not in data or "coursework_id" not in data:
-            return flask.jsonify({"error": "course_id and coursework_id are required"}), 400
+            return flask.jsonify(
+                {"error": "course_id and coursework_id are required"}
+            ), 400
 
         with campus.with_user_session() as client:
             # Check ownership
@@ -278,8 +283,12 @@ def register_routes(app: flask.Flask, login_manager):
                 return flask.jsonify({"error": "Forbidden"}), 403
 
             # Filter out the link to remove
-            updated_links = [l for l in current.classroom_links if l.course_id != course_id]
-            links_data = [asdict(l) for l in updated_links]
+            updated_links = [
+                link
+                for link in current.classroom_links
+                if link.course_id != course_id
+            ]
+            links_data = [asdict(link) for link in updated_links]
 
             client.api.assignments[assignment_id].update(classroom_links=links_data)
             updated = client.api.assignments[assignment_id].get()

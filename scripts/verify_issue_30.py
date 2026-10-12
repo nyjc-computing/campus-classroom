@@ -325,7 +325,7 @@ class FakeCampus:
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
-def _fake_push_context(self):
+def _fake_push_context(_self):
     flask.g.user = None
     flask.g.device = None
     user = flask.session.get("verify_user")

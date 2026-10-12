@@ -7,9 +7,23 @@ on:
     branches: [main]
 
 jobs:
-  # No ruff job yet: the codebase predates the [tool.ruff] config in
-  # pyproject.toml (44 violations at the pinned version) — adopt a lint
-  # gate only after a cleanup pass.
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      # Config lives in pyproject.toml [tool.ruff.lint]; the repo must stay
+      # green under `ruff check .` (same policy as campus-profile).
+      - name: Run ruff
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: '0.16.9'
+
   smoke:
     name: Smoke Test (${{ matrix.python-version }})
     runs-on: ubuntu-latest

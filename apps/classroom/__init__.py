@@ -5,16 +5,14 @@ Campus Classroom Application: assignment platform with Google Classroom integrat
 
 import os
 
-from dotenv import load_dotenv
-
 import campus_python
 import flask
 from campus import flask_campus
 from campus.common import env
+from dotenv import load_dotenv
 
 from . import classroom_auth as cauth
-from . import enrollment
-from . import routes
+from . import enrollment, routes
 
 # Load environment variables from .env file
 load_dotenv()
@@ -68,7 +66,7 @@ def create_app():
             try:
                 from datetime import datetime
                 dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-            except:
+            except ValueError:
                 return dt
         if hasattr(dt, "strftime"):
             return dt.strftime(format)
@@ -138,7 +136,9 @@ def create_app():
     @login_manager.login_required
     def submission_view(submission_id: str, **_):
         """View submission page."""
-        return flask.render_template("submissions/view.html", submission_id=submission_id)
+        return flask.render_template(
+            "submissions/view.html", submission_id=submission_id
+        )
 
     # Shareable assignment page (PRD §6.9): the Link Material fallback posts
     # this URL into Classroom. Assignment content is never public (PRD v1.3
