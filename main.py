@@ -1,6 +1,13 @@
 """Main entry point for Campus Classroom Flask application."""
 
-from apps.classroom import create_app
+import os
+
+# Local dev server marker (issue #12): selects the Lax session-cookie
+# policy in the app factory; the deployment (no FLASK_DEBUG) gets the
+# SameSite=None + Secure + Partitioned policy the Classroom iframes need.
+os.environ.setdefault("FLASK_DEBUG", "1")
+
+from apps.classroom import create_app  # noqa: E402
 
 app = create_app()
 

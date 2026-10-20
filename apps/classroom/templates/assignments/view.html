@@ -206,7 +206,10 @@ async function saveEdit(e) {
     try {
         const response = await fetch(`/api/v1/assignments/${assignmentId}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
                 title: title,
                 description: description || null,
@@ -348,7 +351,10 @@ async function sendToClassroom() {
     try {
         const response = await fetch(`/api/v1/assignments/${assignmentId}/classroom/send`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({ course_ids: courseIds })
         });
 

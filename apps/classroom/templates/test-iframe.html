@@ -59,7 +59,7 @@
                             <label class="form-label">Test Parameters:</label>
                             <div class="mb-2">
                                 <input type="checkbox" id="useMockParams" checked>
-                                <label for="useMockParams">Use mock params</label>
+                                <label for="useMockParams">Use sample params</label>
                             </div>
                             <div class="mb-2">
                                 <input type="text" class="form-control form-control-sm" id="customParams"
@@ -68,6 +68,32 @@
                         </div>
 
                         <button type="button" class="btn btn-primary w-100" onclick="updateIframe()">Refresh</button>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">Context modes (issue #12)</h6>
+                    </div>
+                    <div class="card-body small text-muted">
+                        <p class="mb-2">
+                            <strong>Debug server</strong> (local): iframes render
+                            with <code>source: "mock"</code> — the sample params
+                            are echoed, no Classroom call is made.
+                        </p>
+                        <p class="mb-2">
+                            <strong>Deployment</strong>: params are validated
+                            server-side via <code>getAddOnContext</code> —
+                            forged params get a JSON 403, wrong-role users get
+                            403 role_mismatch, and a signed-in user without a
+                            Google connection gets the connect prompt.
+                        </p>
+                        <p class="mb-0">
+                            The session cookie on the deployment is
+                            SameSite=None + Secure + Partitioned (CHIPS), so
+                            the in-iframe Campus sign-in sticks inside the
+                            Classroom iframe.
+                        </p>
                     </div>
                 </div>
 

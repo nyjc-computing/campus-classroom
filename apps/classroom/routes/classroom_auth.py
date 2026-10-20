@@ -30,19 +30,23 @@ def register_routes(app: flask.Flask, login_manager):
     def handle_classroom_auth_error(err: cauth.ClassroomAuthError):
         """No auth-bridge failure may surface as a 500.
 
-        Browser paths get a flash + redirect to the connection page (whose
-        reconnect CTA points at the campus-profile integrations page);
-        API and iframe paths get a machine-readable JSON error carrying
-        the same reconnect URL.
+        API paths get a machine-readable JSON error; browser paths (the
+        /addon/* iframes included, since issue #12's session policy makes
+        the in-iframe sign-in redirect viable) get HTML: reconnectable
+        failures render the connect-prompt page whose CTA opens the
+        campus-profile integrations page in a new tab, a stale campus
+        session redirects into the campus OAuth flow inside the iframe,
+        and everything else lands on the connection page after a flash.
         """
         wants_json = (
-            flask.request.path.startswith(("/api/", "/addon/"))
+            flask.request.path.startswith("/api/")
             or flask.request.accept_mimetypes.best == "application/json"
         )
         if isinstance(err, cauth.CampusSessionExpiredError):
             # The broker needs a live campus bearer; none can be obtained.
-            # Browser paths re-enter the campus OAuth flow, API paths get
-            # the machine-readable 401.
+            # Browser paths re-enter the campus OAuth flow (inside the
+            # iframe, on the deployment — the CHIPS session cookie makes
+            # the round trip stick), API paths get the JSON 401.
             if wants_json:
                 return flask.jsonify(
                     {"error": {"code": err.code, "message": err.message}}
@@ -64,6 +68,14 @@ def register_routes(app: flask.Flask, login_manager):
         reconnectable = isinstance(
             err, (cauth.NotConnectedError, cauth.MissingClassroomScopesError)
         )
+        if flask.request.path.startswith("/addon/") and reconnectable:
+            # Inside the Classroom iframe: the connect prompt (403, no
+            # data) with the integrations CTA opening in a new tab — the
+            # same page /a/ uses for its not-connected visitors.
+            return flask.render_template(
+                "assignments/share_connect.html",
+                profile_integrations_url=_profile_integrations_url(),
+            ), 403
         if reconnectable:
             # The connection page renders the state truthfully (missing
             # scopes included) with the profile-page reconnect CTA.

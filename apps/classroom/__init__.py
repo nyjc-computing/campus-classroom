@@ -58,6 +58,47 @@ def create_app():
     if not app.config["SECRET_KEY"]:
         raise ValueError("SECRET_KEY environment variable is required")
 
+    # In-iframe session policy (issue #12): Classroom embeds /addon/* as
+    # third-party iframes, where SameSite=Lax cookies are never sent —
+    # every /addon/* route and its same-origin /api/v1/* fetch would be
+    # unauthenticated. The deployment therefore serves the iframe-capable
+    # policy: SameSite=None + Secure + Partitioned (CHIPS), which carries
+    # the session the in-iframe sign-in (via the framable campusauth
+    # pages) sets inside the iframe's (classroom, app) partition. Local
+    # debug keeps Flask's Lax default: Secure/Partitioned add nothing on
+    # the plain-HTTP dev server, and real-iframe testing runs against the
+    # deployment anyway. Requires Flask >= 3.1 for PARTITIONED.
+    if os.environ.get("FLASK_DEBUG") != "1":
+        app.config.update(
+            SESSION_COOKIE_SAMESITE="None",
+            SESSION_COOKIE_SECURE=True,
+            SESSION_COOKIE_PARTITIONED=True,
+        )
+
+    # CSRF guard for the SameSite=None session (issue #12): a cookie that
+    # crosses sites makes cross-site form posts carry it, so /api/v1/*
+    # mutations must present the custom header the app's own fetch()es
+    # set — forged cross-site requests cannot add headers. GETs stay
+    # open: they mutate nothing and their JSON is unreadable cross-site.
+    @app.before_request
+    def _require_ajax_header_for_api_mutations():
+        if (flask.request.method in {"POST", "PATCH", "PUT", "DELETE"}
+                and flask.request.path.startswith("/api/v1/")
+                and flask.request.headers.get("X-Requested-With") != "XMLHttpRequest"):
+            return (
+                flask.jsonify(
+                    {
+                        "error": {
+                            "code": "csrf_header_missing",
+                            "message": "Mutations must be sent with the "
+                            "X-Requested-With header (issue #12).",
+                        }
+                    }
+                ),
+                403,
+            )
+        return None
+
     # Add jinja timestamp filter
     def timestamp(dt, format="%%Y-%%m-%%d %%H:%%M"):
         if dt is None:
