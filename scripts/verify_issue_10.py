@@ -401,7 +401,22 @@ STORE.new_assignment("a_degraded2", created_by=CAMPUS_EMAIL)
 STORE.new_assignment("a_partial", created_by=CAMPUS_EMAIL)
 STORE.new_assignment("a_foreign", created_by=OTHER_EMAIL)
 
+
+def _ajaxify(client):
+    """Mutations carry the X-Requested-With header (#12 CSRF guard)."""
+    for method in ("post", "patch", "put", "delete"):
+        original = getattr(client, method)
+
+        def wrapper(path, *a, _orig=original, **kw):
+            headers = kw.pop("headers", None) or {}
+            headers.setdefault("X-Requested-With", "XMLHttpRequest")
+            kw["headers"] = headers
+            return _orig(path, *a, **kw)
+
+        setattr(client, method, wrapper)
+
 client = app.test_client()
+_ajaxify(client)
 
 # ---------------------------------------------------------------------------
 # 1. Course picker source
@@ -585,6 +600,7 @@ check("only the healthy class is linked",
 # ---------------------------------------------------------------------------
 client_noc = app.test_client()
 seed_user(client_noc)
+_ajaxify(client_noc)
 revoke_credentials()
 resp = client_noc.post(
     "/api/v1/assignments/a_eligible/classroom/send",
@@ -596,6 +612,7 @@ check("not-connected send returns 403 JSON",
 
 client_scope = app.test_client()
 seed_user(client_scope)
+_ajaxify(client_scope)
 seed_credentials(cauth.CLASSROOM_SCOPES_MVP)  # no write scope
 resp = client_scope.post(
     "/api/v1/assignments/a_eligible/classroom/send",
@@ -642,6 +659,7 @@ check("anonymous share visit is sent to sign-in (content never public)",
 
 client_foreign = app.test_client()
 seed_user(client_foreign, OTHER_EMAIL)
+_ajaxify(client_foreign)
 resp = client_foreign.get("/a/a_eligible")
 # PRD v1.3 rule 2 (#28): assignment content is owner-or-assigned-class.
 # The stub Classroom returns the same course list for every caller and
@@ -687,6 +705,7 @@ check("app-scope outage: anonymous share visit redirects to sign-in",
       f"{resp.status_code} {resp.headers.get('Location')}")
 client_signed_in = app.test_client()
 seed_user(client_signed_in)
+_ajaxify(client_signed_in)
 resp = client_signed_in.get("/a/a_eligible")
 check("app-scope outage: signed-in visitor still sees the share page",
       resp.status_code == 200

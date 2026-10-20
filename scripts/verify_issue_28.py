@@ -340,16 +340,33 @@ def clear_user(client):
         sess.pop("verify_user", None)
 
 
+
+def _ajaxify(client):
+    """Mutations carry the X-Requested-With header (#12 CSRF guard)."""
+    for method in ("post", "patch", "put", "delete"):
+        original = getattr(client, method)
+
+        def wrapper(path, *a, _orig=original, **kw):
+            headers = kw.pop("headers", None) or {}
+            headers.setdefault("X-Requested-With", "XMLHttpRequest")
+            kw["headers"] = headers
+            return _orig(path, *a, **kw)
+
+        setattr(client, method, wrapper)
+
 anon_client = app.test_client()
 
 teacher_client = app.test_client()
 seed_user(teacher_client, TEACHER)
+_ajaxify(teacher_client)
 
 student_client = app.test_client()
 seed_user(student_client, STUDENT)
+_ajaxify(student_client)
 
 teacher2_client = app.test_client()
 seed_user(teacher2_client, OTHER_TEACHER)
+_ajaxify(teacher2_client)
 
 
 # --- 1. /a/{id} share gate -------------------------------------------------
@@ -492,6 +509,7 @@ check("enrolled student /a/ renders content",
 
 r = student2_client = app.test_client()
 seed_user(student2_client, STUDENT2)
+_ajaxify(student2_client)
 r = student2_client.get("/a/a1")
 check("unenrolled student /a/ still gets the 403 gate page",
       r.status_code == 403, f"status={r.status_code}")

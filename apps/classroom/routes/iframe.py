@@ -2,10 +2,23 @@
 
 Google Classroom Add-On iframe routes.
 
-These routes render within Google Classroom iframes.
+These routes render within Google Classroom iframes. Since issue #12 the
+context is no longer trusted from the URL alone: on the deployment every
+view validates itself server-side via
+courses.courseWork.getAddOnContext (role + post), and mock context is
+reachable only under a debug server.
 """
 
 import flask
+
+from .. import classroom_auth as cauth
+from .. import iframe_context
+
+_TEMPLATES = {
+    "teacher": "addon/teacher.html",
+    "student": "addon/student.html",
+    "review": "addon/review.html",
+}
 
 
 def register_routes(app: flask.Flask, login_manager):
@@ -16,21 +29,52 @@ def register_routes(app: flask.Flask, login_manager):
         login_manager: The OAuthLoginManager for authentication
     """
 
-    def get_mock_context(**overrides):
-        """Get mock Classroom context for local testing.
+    def _context_error_response(err: iframe_context.ContextError):
+        app.logger.warning(
+            "Iframe context rejected (%s): %s", err.code, err.message
+        )
+        return (
+            flask.jsonify({"error": {"code": err.code, "message": err.message}}),
+            err.status,
+        )
 
-        In production, these come from URL params provided by Google Classroom.
-        For local testing, we use mock values unless overridden.
+    def _render_view(view: str):
+        """Shared context resolution for the three authed iframe views.
+
+        Deployment path (never debug): parse the camelCase URL params,
+        then validate them server-side with getAddOnContext under the
+        view's add-on scope — role mismatches and forged params are
+        rejected with 403/400. Debug path: the historical mock context,
+        which the deployment can never reach (issue #12's mock gate).
         """
-        defaults = {
-            "courseId": "test_course_123",
-            "itemId": "test_item_456",
-            "itemType": "courseWork",
-            "attachmentId": "test_attachment_789",
-            "addOnToken": None,
-        }
-        defaults.update(overrides)
-        return defaults
+        try:
+            params = iframe_context.parse_params(view, flask.request.args)
+        except iframe_context.ParamError as err:
+            return (
+                flask.jsonify(
+                    {"error": {"code": "invalid_params", "message": str(err)}}
+                ),
+                400,
+            )
+
+        if flask.current_app.debug:
+            context = iframe_context.mock_context(view, flask.request.args)
+        else:
+            try:
+                with cauth.with_classroom_session(
+                    required_scopes=iframe_context.VIEW_SCOPES[view],
+                ) as classroom:
+                    context = iframe_context.resolve_real_context(
+                        classroom, view, params
+                    )
+            except iframe_context.ContextError as err:
+                return _context_error_response(err)
+
+        return flask.render_template(
+            _TEMPLATES[view],
+            user_id=flask.g.user.id,
+            context=context,
+        )
 
     @app.get("/addon/discovery")
     def addon_discovery():
@@ -56,77 +100,33 @@ def register_routes(app: flask.Flask, login_manager):
     def addon_teacher(**_):
         """Teacher View iframe - create and edit assignments.
 
-        URL parameters (from Google Classroom):
-            - courseId: The Classroom course ID
-            - itemId: The CourseWork/CourseWorkMaterial ID
-            - attachmentId: The add-on attachment ID
-
-        For local testing, these can be omitted to use mock values.
+        Context is resolved server-side (see _render_view): URL params
+        courseId / itemId / attachmentId, validated against
+        getAddOnContext on the deployment; TEACHER role enforced.
         """
-        user_id = flask.g.user.id
-        context = get_mock_context(
-            courseId=flask.request.args.get("courseId"),
-            itemId=flask.request.args.get("itemId"),
-            attachmentId=flask.request.args.get("attachmentId"),
-        )
-
-        return flask.render_template(
-            "addon/teacher.html",
-            user_id=user_id,
-            context=context,
-        )
+        return _render_view("teacher")
 
     @app.get("/addon/student")
     @login_manager.login_required
     def addon_student(**_):
         """Student View iframe - complete assignment.
 
-        URL parameters (from Google Classroom):
-            - courseId: The Classroom course ID
-            - itemId: The CourseWork ID
-            - attachmentId: The add-on attachment ID
-
-        For local testing, these can be omitted to use mock values.
+        Context is resolved server-side (see _render_view): URL params
+        courseId / itemId / attachmentId, validated against
+        getAddOnContext on the deployment; STUDENT role enforced.
         """
-        user_id = flask.g.user.id
-        context = get_mock_context(
-            courseId=flask.request.args.get("courseId"),
-            itemId=flask.request.args.get("itemId"),
-            attachmentId=flask.request.args.get("attachmentId"),
-        )
-
-        return flask.render_template(
-            "addon/student.html",
-            user_id=user_id,
-            context=context,
-        )
+        return _render_view("student")
 
     @app.get("/addon/review")
     @login_manager.login_required
     def addon_review(**_):
         """Student Work Review iframe - teacher reviews submissions.
 
-        URL parameters (from Google Classroom):
-            - courseId: The Classroom course ID
-            - itemId: The CourseWork ID
-            - attachmentId: The add-on attachment ID
-            - submissionId: The student submission ID
-
-        For local testing, these can be omitted to use mock values.
+        Context is resolved server-side (see _render_view): URL params
+        courseId / itemId / attachmentId / submissionId, validated against
+        getAddOnContext on the deployment; TEACHER role enforced.
         """
-        user_id = flask.g.user.id
-        context = get_mock_context(
-            courseId=flask.request.args.get("courseId"),
-            itemId=flask.request.args.get("itemId"),
-            attachmentId=flask.request.args.get("attachmentId"),
-            submissionId=flask.request.args.get("submissionId"),
-        )
-
-        return flask.render_template(
-            "addon/review.html",
-            user_id=user_id,
-            context=context,
-        )
+        return _render_view("review")
 
 
 __all__ = ["register_routes"]

@@ -135,7 +135,10 @@ function autoSave(questionId, value) {
     autoSaveTimeouts[questionId] = setTimeout(async () => {
         await fetch(`/api/v1/submissions/${submissionId}/responses`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
                 question_id: questionId,
                 response_text: value
@@ -147,7 +150,8 @@ function autoSave(questionId, value) {
 async function submitSubmission() {
     try {
         const response = await fetch(`/api/v1/submissions/${submissionId}/submit`, {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
         if (!response.ok) throw new Error('Failed to submit');
 

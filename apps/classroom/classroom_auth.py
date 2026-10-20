@@ -465,6 +465,37 @@ class ClassroomClient:
             json=body,
         )
 
+    # -- Iframe context (issue #12, PRD §4.4 GC-7) --
+
+    def get_addon_context(
+            self, course_id: str, item_id: str, *,
+            attachment_id: str | None = None,
+            add_on_token: str | None = None,
+    ) -> dict:
+        """Read the add-on context for one iframe open
+        (courses.courseWork.getAddOnContext).
+
+        Google's docs recommend calling this on every iframe open: it
+        validates the URL parameters against the real post and returns the
+        user's role (TEACHER/STUDENT) — the only role authority, since
+        Campus has none (PRD §6.9). Runs on the user's own credential (the
+        broker release), never an app credential. ``attachment_id`` is
+        required by Google for every iframe type except Attachment
+        Discovery; ``add_on_token`` is optional (needed only when the
+        add-on has no attachments on the post and its project didn't
+        create the post).
+        """
+        params: dict = {}
+        if attachment_id:
+            params["attachmentId"] = attachment_id
+        if add_on_token:
+            params["addOnToken"] = add_on_token
+        return self.request(
+            "GET",
+            f"v1/courses/{course_id}/courseWork/{item_id}/addOnContext",
+            params=params,
+        )
+
 
 @contextmanager
 def with_classroom_session(
