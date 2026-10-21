@@ -170,26 +170,25 @@ def main() -> int:
 
     # 0. Teacher-membership pre-check: the create calls need a TEACHER of
     # the TEST course. A non-teacher would 403 on courseWork.create and
-    # masquerade as the licence verdict.
-    status, teachers = http_json(
-        "GET", f"{CLASSROOM_API}/v1/courses/{COURSE_ID}/teachers?pageSize=100",
+    # masquerade as the licence verdict. Direct lookup (teachers.get)
+    # instead of listing — profile fields can come back empty in list
+    # responses, which makes matching unreliable.
+    status, teacher = http_json(
+        "GET", f"{CLASSROOM_API}/v1/courses/{COURSE_ID}/teachers/me",
         headers=headers,
     )
     if status == 200:
-        profiles = [t.get("profile", {}) for t in teachers.get("teachers", [])]
-        ids = [str(p.get("id", "")) for p in profiles]
-        emails = [str(p.get("emailAddress", "")) for p in profiles]
-        if user_id not in ids and user_id not in emails:
-            revoke()
-            sys.exit(
-                f"error: {user_id} is NOT a teacher of the TEST course "
-                f"{COURSE_ID}. Open Classroom as Campus TestStaff "
-                f"(People tab) and invite this account as a co-teacher, "
-                f"then re-run. Teachers seen: {emails or ids}"
-            )
         print(f"[probe] {user_id} is a teacher of the TEST course")
+    elif status == 404:
+        revoke()
+        sys.exit(
+            f"error: {user_id} is NOT a teacher of the TEST course "
+            f"{COURSE_ID}. Open Classroom as Campus TestStaff "
+            f"(People tab) and invite this account as a co-teacher, "
+            f"then re-run."
+        )
     else:
-        print(f"[probe] WARN: teacher list check HTTP {status} — "
+        print(f"[probe] WARN: teacher check HTTP {status} — "
               "continuing anyway")
 
     # 1. Draft CourseWork in the TEST course (invisible to students).
