@@ -160,12 +160,37 @@ def main() -> int:
         )
     google_token = released["access_token"]
     scopes = released.get("scope", "?")
-    print("[probe] broker released google.classroom token")
+    user_id = released.get("user_id", "?")
+    print(f"[probe] broker released google.classroom token for {user_id}")
     if "classroom.coursework.students" not in scopes:
         revoke()
-        sys.exit("error: grant lacks coursework.students — is this the "
-                 "STAFF account? courseWork.create needs it.")
+        sys.exit("error: grant lacks coursework.students — courseWork.create "
+                 "needs it (staff/teacher account required).")
     headers = {"Authorization": f"Bearer {google_token}"}
+
+    # 0. Teacher-membership pre-check: the create calls need a TEACHER of
+    # the TEST course. A non-teacher would 403 on courseWork.create and
+    # masquerade as the licence verdict.
+    status, teachers = http_json(
+        "GET", f"{CLASSROOM_API}/v1/courses/{COURSE_ID}/teachers?pageSize=100",
+        headers=headers,
+    )
+    if status == 200:
+        profiles = [t.get("profile", {}) for t in teachers.get("teachers", [])]
+        ids = [str(p.get("id", "")) for p in profiles]
+        emails = [str(p.get("emailAddress", "")) for p in profiles]
+        if user_id not in ids and user_id not in emails:
+            revoke()
+            sys.exit(
+                f"error: {user_id} is NOT a teacher of the TEST course "
+                f"{COURSE_ID}. Open Classroom as Campus TestStaff "
+                f"(People tab) and invite this account as a co-teacher, "
+                f"then re-run. Teachers seen: {emails or ids}"
+            )
+        print(f"[probe] {user_id} is a teacher of the TEST course")
+    else:
+        print(f"[probe] WARN: teacher list check HTTP {status} — "
+              "continuing anyway")
 
     # 1. Draft CourseWork in the TEST course (invisible to students).
     status, coursework = http_json(
