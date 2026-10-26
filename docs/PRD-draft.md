@@ -1,10 +1,11 @@
 # PRD: Campus Classroom - Assignment Platform
 
-**Status:** Draft
-**Version:** 1.3
-**Date:** 2026-10-02
+**Status:** Draft — add-on lane parked (see Implementation status)
+**Version:** 1.4
+**Date:** 2026-10-26
 
 ## Changelog
+- **v1.4** (2026-10-26): **Add-on lane parked — the link-attachment path is the product.** NYJC will not hold Google Workspace for Education Plus / Teaching and Learning Upgrade licences, and Classroom add-ons require them: Google rejects add-on attachment creation for every account on the domain (`UserIneligibleToCreateAddOnAttachment`; full evidence chain in issue #11). The registration artefacts (Marketplace listing, domain install, client configuration) are complete and documented in #11, and the add-on implementation (#12 via PR #59 — real iframe context, CHIPS session, role enforcement) is merged and deployed but dormant; if the school ever holds eligible licences, reopen #11 and follow its re-entry path (probe → chip → live pass). Until then the product is the **link-attachment path**: teachers post Campus assignments to Classroom as Link Materials (§6.7, issue #10), students complete them on the gated share pages (§6.9, issue #28), teachers review on the platform. Grade passback to Classroom (grade passback sections, session #16) is out of scope without licences — grades live in Campus. The add-on sections below (§4.4 GC-1..GC-8, §6.4, §6.10) are retained as the design reference for a licensed future
 - **v1.3** (2026-10-02): Authorization model made explicit (§6.9): assignments are editable only by their owner (group ownership post-MVP), assignment content is never visible to the public (the `/a/` share page becomes gated — Campus sign-in plus, for students, enrollment in a linked Classroom course; this deliberately supersedes the anonymous link-preview behavior shipped via issue #24), attempting/submitting requires enrollment in a Classroom course the assignment was assigned to, and logged-in students see only assignments assigned to them. Found during the issue #24 review: none of these rules are enforced today (no ownership/visibility checks on Campus API assignment routes; the share page renders anonymously)
 - **v1.2** (2026-10-02): Corrected §6.4 scope names to Google's canonical set — `coursework.readonly` → `course-work.readonly` (hyphenated; unhyphenated name does not exist), dropped `coursework.students.readonly` (noncanonical alias of `student-submissions.students.readonly`), added `courses.readonly` (required for `courses.list()`). Found by Google rejecting the scopes at first real consent (issue #9); canonical source of truth is the GCP "Data access" scope list
 - **v1.1** (2025-02-12): Resolved question hierarchy UI (flat list for MVP, anticipate tree view if complexity grows)
@@ -16,6 +17,10 @@
 - **v0.5** (2025-01-28): Initial draft
 
 ---
+
+## Implementation status (2026-10-26): add-on lane parked — the link-attachment path is the product
+
+NYJC will not hold Google Workspace for Education Plus / Teaching and Learning Upgrade licences, and Classroom add-ons require them (Google: `UserIneligibleToCreateAddOnAttachment`; evidence chain in issue #11). The product flows are: **Link Materials** into Classroom (§6.7, #10), **gated share pages** for students (§6.9, #28), **platform-side review and grades**. The add-on registration is complete (Marketplace listing live, domain-installed — #11) and the add-on code merged (#59) but dormant; grade passback is out of scope without licences. The add-on design sections below are retained as reference for a licensed future.
 
 ## 1. Overview
 
