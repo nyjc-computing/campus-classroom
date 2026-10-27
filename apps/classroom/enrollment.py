@@ -10,6 +10,9 @@ a member of a Google Classroom course this assignment is linked to?
   `classroom_links`.
 - Rule 3 (classroom-scoped attempt/submit): a student may create or
   mutate a submission only under the same condition.
+- Rule 4 (assigned-only listing, #14): a user's assignment list contains
+  their own assignments plus those linked to a course they are in —
+  never an enumerable index of all assignments.
 
 The answer comes from the user's own Classroom courses
 (`courses.list` through the auth bridge) intersected with the
@@ -29,20 +32,15 @@ into a "not enrolled" answer):
   reconnect guidance.
 - `ClassroomAPIError` / `OAuthFlowError`: Classroom unreachable —
   surfaced (browser paths redirect to the connection page, API paths
-  get a 502 JSON).
+  get a 502 JSON). The rule-4 listing is the one deliberate exception:
+  a discovery page degrades to the caller's own assignments (every
+  content read still passes rules 2/3, so the degradation cannot leak).
 """
 
 from . import classroom_auth as cauth
 
 # The only Classroom scope the enrollment check itself needs.
 COURSES_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly"
-
-# courses.list page size: one page, no pagination (ClassroomClient does
-# not follow nextPageToken). A user with more than 100 active courses
-# would see enrollment checks miss beyond the first page — unrealistic
-# for a school account; revisit with the Student View listing (#14),
-# which needs real pagination anyway.
-_COURSES_PAGE_SIZE = 100
 
 
 def linked_course_ids(assignment) -> set[str]:
@@ -54,18 +52,38 @@ def linked_course_ids(assignment) -> set[str]:
     }
 
 
-def user_course_ids() -> set[str]:
-    """Ids of the signed-in user's Google Classroom courses.
+def user_courses() -> dict[str, str]:
+    """The signed-in user's Google Classroom courses (id → name).
 
     Raises the classroom_auth errors listed in the module docstring.
     """
     with cauth.with_classroom_session(
             required_scopes=(COURSES_READONLY_SCOPE,)) as classroom:
         return {
-            course["id"]
-            for course in classroom.courses_list(page_size=_COURSES_PAGE_SIZE)
+            course["id"]: course.get("name") or course["id"]
+            for course in classroom.courses_list(page_size=100)
             if course.get("id")
         }
+
+
+def enrolled_courses(assignment) -> list[dict]:
+    """Courses the signed-in user shares with this assignment.
+
+    Ordered by the assignment's classroom_links (the teacher's send
+    order), each as {"course_id", "name"} — the share page keys a
+    submission to one of these. Empty when the user is in none of them
+    or the assignment has no classroom_links at all.
+    """
+    mine = user_courses()
+    seen: dict[str, None] = {}
+    for link in (getattr(assignment, "classroom_links", None) or []):
+        course_id = getattr(link, "course_id", None)
+        if course_id and course_id in mine:
+            seen.setdefault(course_id, None)
+    return [
+        {"course_id": course_id, "name": mine[course_id]}
+        for course_id in seen
+    ]
 
 
 def is_enrolled(assignment) -> bool:
@@ -74,15 +92,15 @@ def is_enrolled(assignment) -> bool:
     An assignment with no classroom_links is enrolled for nobody (only
     its owner can see or attempt it).
     """
-    linked = linked_course_ids(assignment)
-    if not linked:
+    if not linked_course_ids(assignment):
         return False
-    return bool(linked & user_course_ids())
+    return bool(enrolled_courses(assignment))
 
 
 __all__ = [
     "COURSES_READONLY_SCOPE",
+    "enrolled_courses",
     "is_enrolled",
     "linked_course_ids",
-    "user_course_ids",
+    "user_courses",
 ]

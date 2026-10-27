@@ -12,7 +12,9 @@ For each Classroom course the teacher selected:
    /addon/teacher|student|review routes.
 3. Ineligible: create the draft CourseWork with a Link Material pointing
    at the shareable /a/{assignment_id} page (students open content in a
-   new tab).
+   new tab). The URL pins its course (?course=<courseId>) so the share
+   page (#14) keys each student's submission to the class they opened
+   it from, even when an assignment is posted to several classes.
 4. Persist the ClassroomLink in Campus (GC-8) via
    client.api.assignments[id].links.add — course_id + coursework_id
    always, attachment_id only when the add-on attachment exists.
@@ -83,7 +85,6 @@ def send_assignment_to_classroom(
         {course_id, status, coursework_id, attachment_id, message}.
     """
     origin = campus_url.canonical_origin()
-    share_url = f"{origin}/a/{assignment.id}"
     linked_course_ids = {link.course_id for link in (assignment.classroom_links or [])}
 
     outcomes: list[dict] = []
@@ -97,6 +98,9 @@ def send_assignment_to_classroom(
                 "message": "This class already has this assignment posted.",
             })
             continue
+        # Per-course share URL: the pinned course tells the share page
+        # (#14) which class a submission opened from.
+        share_url = f"{origin}/a/{assignment.id}?course={course_id}"
         outcomes.append(_send_to_course(
             campus_client, classroom, assignment, course_id, origin, share_url,
         ))

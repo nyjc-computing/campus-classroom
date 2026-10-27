@@ -189,9 +189,18 @@ def create_app():
     # bridge); anyone else gets a 403 gate page with no assignment content.
     # A signed-in visitor without a google.classroom connection gets a
     # connect prompt (deny + CTA) instead of the bare gate.
+    #
+    # #14: for an enrolled student the page is also the answer sheet —
+    # questions render with an answer form backed by the submissions API
+    # (create/resume/save/submit, teacher feedback once released). The
+    # submission is keyed to one of the shared courses: a per-course Link
+    # Material URL pins ?course= (classroom_sync), otherwise a single
+    # shared course is used directly and several shared courses get a
+    # class picker. The owner gets a render-only preview with a manage
+    # link instead of a form.
     @app.get("/a/<assignment_id>")
     def assignment_share(assignment_id: str):
-        """Gated render-only assignment page for the Link Material fallback.
+        """Gated assignment page for the Link Material fallback (#28/#14).
 
         Primary read path is the app-scoped Campus session, falling back to
         the visitor's own Campus session if app scope is unavailable. The
@@ -220,14 +229,18 @@ def create_app():
                     flask.abort(404)
                 raise
 
-        if str(getattr(assignment, "created_by", "")) != str(flask.g.user.id):
+        is_owner = (
+            str(getattr(assignment, "created_by", "")) == str(flask.g.user.id)
+        )
+        courses: list[dict] = []
+        if not is_owner:
             # Non-owner: rule 2's assigned-student render. The enrollment
             # check is fail-closed — bridge errors propagate to the
             # app-wide handler (browser paths land on the connection
             # page), except NotConnectedError, which gets the inline
             # connect prompt.
             try:
-                enrolled = enrollment.is_enrolled(assignment)
+                courses = enrollment.enrolled_courses(assignment)
             except cauth.NotConnectedError:
                 return flask.render_template(
                     "assignments/share_connect.html",
@@ -235,12 +248,26 @@ def create_app():
                         f"{cauth.profile_integrations_url()}/profile/integrations"
                     ),
                 ), 403
-            if not enrolled:
+            if not courses:
                 return flask.render_template("assignments/share_gated.html"), 403
+
+        # A per-course Link Material pins its course; an unpinned open
+        # uses the single shared course directly, and several shared
+        # courses leave the choice to the class picker in the form.
+        requested = flask.request.args.get("course")
+        pinned_course = (
+            requested if requested in {c["course_id"] for c in courses} else None
+        )
 
         return flask.render_template(
             "assignments/share.html",
             assignment=assignment,
+            is_owner=is_owner,
+            courses=courses,
+            pinned_course=pinned_course,
+            profile_integrations_url=(
+                f"{cauth.profile_integrations_url()}/profile/integrations"
+            ),
         )
 
     # Test routes (for local development)

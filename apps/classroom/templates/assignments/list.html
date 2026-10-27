@@ -24,10 +24,16 @@
 </div>
 
 <script>
+// Page context: the signed-in user decides which card actions a row gets
+// (own assignments are managed here; assigned ones open on the gated
+// /a/ page, PRD §6.9 rule 4 — #14).
+const MY_ID = {{ g.user.id | tojson }};
+
 // Load assignments on page load
 async function loadAssignments() {
     try {
-        const response = await fetch('/api/v1/assignments?created_by={{ g.user.id }}');
+        // Rule 4 (#14): the API computes own + assigned-to-my-courses.
+        const response = await fetch('/api/v1/assignments');
         if (!response.ok) throw new Error('Failed to load assignments');
 
         const data = await response.json();
@@ -38,7 +44,10 @@ async function loadAssignments() {
                 <div class="col-12">
                     <div class="text-center py-5">
                         <h5 class="text-muted">No assignments yet</h5>
-                        <p class="text-muted">Create your first assignment to get started.</p>
+                        <p class="text-muted">
+                            Assignments you create — or that a teacher assigns to
+                            your Google Classroom classes — will appear here.
+                        </p>
                         <a href="{{ url_for('assignment_new') }}" class="btn btn-primary">Create Assignment</a>
                     </div>
                 </div>
@@ -46,28 +55,37 @@ async function loadAssignments() {
             return;
         }
 
-        container.innerHTML = data.map(assignment => `
+        container.innerHTML = data.map(assignment => {
+            const mine = assignment.created_by === MY_ID;
+            // Own assignments are managed in the app; assigned ones open
+            // on the gated share page.
+            const target = `/${mine ? 'assignments' : 'a'}/${encodeURIComponent(assignment.id)}`;
+            return `
             <div class="col-md-6 col-lg-4 mb-3">
                 <div class="card h-100">
                     <div class="card-body">
                         <h5 class="card-title">
-                            <a href="{{ url_for('assignment_view', assignment_id='${assignment.id}') }}" class="text-decoration-none text-dark">
+                            <a href="${target}" class="text-decoration-none text-dark">
                                 ${escapeHtml(assignment.title)}
                             </a>
                         </h5>
                         ${assignment.description ? `<p class="text-muted small mb-2">${escapeHtml(assignment.description)}</p>` : ''}
                         <div class="mb-2">
                             <span class="badge bg-secondary">${assignment.questions.length} questions</span>
-                            ${assignment.classroom_links.length > 0 ? '<span class="badge bg-primary ms-2">Linked to Classroom</span>' : ''}
+                            ${mine
+                                ? (assignment.classroom_links.length > 0 ? '<span class="badge bg-primary ms-2">Linked to Classroom</span>' : '')
+                                : '<span class="badge bg-success ms-2">Assigned to you</span>'}
                         </div>
                         <div class="d-flex justify-content-between align-items-center">
-                            <small class="text-muted">Created ${timestamp(assignment.created_at)}</small>
-                            <a href="{{ url_for('assignment_view', assignment_id='${assignment.id}') }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                            <small class="text-muted">${mine
+                                ? `Created ${timestamp(assignment.created_at)}`
+                                : 'By your teacher'}</small>
+                            <a href="${target}" class="btn btn-sm btn-outline-primary">${mine ? 'Edit' : 'Open'}</a>
                         </div>
                     </div>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     } catch (error) {
         console.error('Error loading assignments:', error);
         container.innerHTML = `
