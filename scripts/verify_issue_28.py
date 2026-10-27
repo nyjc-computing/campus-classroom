@@ -29,7 +29,9 @@ network and no real Google account are involved):
    unsubmit, update, delete) require it too — an enrollment revoked
    after creation closes the attempt. Reads are unchanged.
 
-Assigned-only student listing (rule 4) stays with #14 (Student View).
+Assigned-only student listing (rule 4) is #14; this script still holds
+the own-only fallback for a user whose Classroom bridge yields no
+courses (the pre-#14 behavior, kept as the degraded mode).
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_28.py
 """
@@ -118,6 +120,9 @@ class FakeAssignments:
 
     def list(self, created_by=None, **_):
         self._calls.append(("assignments.list", {"created_by": created_by}))
+        if created_by is None:
+            # Unfiltered: since #14 the app route filters rule 4 itself.
+            return list(self._store.values())
         return [a for a in self._store.values() if a.created_by == created_by]
 
 
@@ -398,12 +403,13 @@ check("unknown assignment id on /a/ gets 404",
 # --- 2. Assignment API -----------------------------------------------------
 CALLS.clear()
 r = teacher_client.get("/api/v1/assignments")
-check("assignment list returns only own assignments",
+check("assignment list returns only own assignments (no courses scripted)",
       r.status_code == 200
       and [a["id"] for a in r.get_json()] == ["a1", "a3"],
       f"status={r.status_code} body={r.get_json()}")
-check("assignment list forced to created_by=me (client filter ignored)",
-      CALLS and CALLS[0] == ("assignments.list", {"created_by": TEACHER}),
+check("assignment list reads unfiltered; filtering happens app-side "
+      "(rule 4 lives in #14)",
+      CALLS and CALLS[0] == ("assignments.list", {"created_by": None}),
       f"calls={CALLS}")
 
 r = teacher_client.get("/api/v1/assignments/a2")

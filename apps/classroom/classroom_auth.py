@@ -109,6 +109,11 @@ CLASSROOM_SCOPES_SEND = (
 # Refresh the access token this many seconds before it actually expires.
 _EXPIRY_SKEW_SECONDS = 60
 
+# courses.list pages followed before stopping (page size 100 → a 2000-course
+# ceiling; a real school account never gets close, the cap only bounds a
+# pathological token loop).
+_COURSES_MAX_PAGES = 20
+
 # Public preview version for userProfiles.checkUserCapability (PRD §6.7).
 _CAPABILITY_PREVIEW_VERSION = "V1_20240930_PREVIEW"
 
@@ -415,13 +420,22 @@ class ClassroomClient:
 
         `teacher_only` uses teacherId=me — courses.list has no `teacherMe`
         parameter (Google rejects it with 400 INVALID_ARGUMENT; found by the
-        issue #10 smoke test against the real API).
+        issue #10 smoke test against the real API). Follows nextPageToken
+        (capped at _COURSES_MAX_PAGES): enrollment matching and the #14
+        listing must see courses beyond the first page.
         """
         params: dict = {"pageSize": min(page_size, 100)}
         if teacher_only:
             params["teacherId"] = "me"
-        data = self.request("GET", "v1/courses", params=params)
-        return data.get("courses", [])
+        courses: list[dict] = []
+        for _ in range(_COURSES_MAX_PAGES):
+            data = self.request("GET", "v1/courses", params=params)
+            courses.extend(data.get("courses", []))
+            next_token = data.get("nextPageToken")
+            if not next_token:
+                return courses
+            params["pageToken"] = next_token
+        return courses
 
     # -- Send-to-Classroom (issue #10, PRD §6.7) --
 

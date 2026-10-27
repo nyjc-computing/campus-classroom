@@ -3,10 +3,24 @@
 {% block title %}{{ assignment.title }}{% endblock %}
 
 {% block content %}
-{# Render-only shareable assignment page (PRD §6.9, /a/{assignment_id}).
-   Gated per PRD v1.3: the route only renders for the assignment's owner
-   (assigned-student rendering lands with #28). Exposes no student data. #}
-<div class="container-md mt-4">
+{# Gated assignment page (PRD §6.9 /a/{assignment_id}), #28 + #14.
+   Owner: render-only preview with a manage link. Enrolled student:
+   questions plus an answer form backed by the submissions API —
+   resume drafts, submit, unsubmit, read teacher feedback. Exposes no
+   other student's data. #}
+<div class="container-md mt-4 mt-md-5 share-page">
+    {% if is_owner %}
+    <div class="alert alert-info d-flex flex-wrap align-items-center gap-2">
+        <i class="bi bi-eye me-1"></i>
+        <span class="flex-grow-1">You own this assignment. Students assigned to it
+        through Google Classroom see an answer form on this page.</span>
+        <a href="{{ url_for('assignment_view', assignment_id=assignment.id) }}"
+           class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-gear me-1"></i>Manage
+        </a>
+    </div>
+    {% endif %}
+
     <div class="card mb-4">
         <div class="card-body">
             <h2>{{ assignment.title }}</h2>
@@ -14,26 +28,59 @@
             <p class="text-muted">{{ assignment.description }}</p>
             {% endif %}
 
+            {% if not is_owner %}
+            {# Submission state + errors: JS-rendered, inline (never
+               console-only — students live in iframes/new tabs). #}
+            <div id="share-status" class="mb-2"></div>
+            {% endif %}
+
             <hr>
+
+            {% if not is_owner and courses | length > 0 %}
+            {# Class the submission is keyed to: pinned by the Link
+               Material URL, single shared course, or a picker. #}
+            <div id="share-course" class="mb-3"></div>
+            {% endif %}
 
             <h5 class="mb-3">Questions ({{ (assignment.questions or []) | length }})</h5>
 
+            {% if (assignment.questions or []) | length == 0 %}
+            <p class="text-muted">This assignment has no questions.</p>
+            {% endif %}
+
             <div class="questions-list mb-4">
                 {% for q in assignment.questions or [] %}
-                <div class="question-item mb-3 p-3">
+                {% set level = q.id.split('.') | length %}
+                <div class="question-item mb-3 p-3" style="margin-left: {{ (level - 1) * 16 }}px">
                     <strong>{{ q.id }}</strong>
                     {% if q.prompt %}
                     <p class="text-muted small mb-2">{{ q.prompt }}</p>
                     {% endif %}
-                    <p class="mb-0">{{ q.question }}</p>
+                    <p class="mb-2">{{ q.question }}</p>
+                    {% if not is_owner %}
+                    <textarea class="form-control answer-input"
+                              data-qid="{{ q.id }}" rows="3"
+                              placeholder="Your answer…"
+                              aria-label="Your answer to {{ q.id }}"></textarea>
+                    <div class="feedback-slot mt-2" data-feedback-for="{{ q.id }}"
+                         hidden></div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
+
+            {% if not is_owner %}
+            <div id="share-error" class="alert alert-danger d-none" role="alert"></div>
+            <div id="share-actions" class="share-actions"></div>
+            {% endif %}
         </div>
     </div>
 
     <p class="text-center text-muted small">
         <i class="bi bi-mortarboard-fill me-1"></i>Powered by Campus Classroom
+        {% if not is_owner %}
+        · Due dates are managed in Google Classroom
+        {% endif %}
     </p>
 </div>
 {% endblock %}
@@ -43,5 +90,400 @@
 .question-item {
     border-left: 2px solid var(--border-color);
 }
+/* Students answer on phones: keep inputs at iOS-non-zooming size and
+   make the action buttons full-width targets. */
+.share-page .answer-input { font-size: 1rem; }
+@media (max-width: 575.98px) {
+    .share-actions {
+        display: grid;
+        gap: 0.5rem;
+    }
+    .share-actions .btn { width: 100%; }
+}
 </style>
+{% endblock %}
+
+{% block extra_js %}
+{% if not is_owner %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script>
+// Page context from the server (all JSON-safe).
+const SHARE = {
+    assignmentId: {{ assignment.id | tojson }},
+    courses: {{ courses | tojson }},          // [{course_id, name}] — shared courses
+    pinnedCourse: {{ pinned_course | tojson }}, // ?course= from the Link Material URL
+    profileIntegrationsUrl: {{ profile_integrations_url | tojson }},
+};
+let submission = null;   // the student's submission for this assignment, or null
+let dirty = false;       // unsaved textarea edits (guards against closing the tab)
+
+// --- state + rendering ------------------------------------------------------
+
+function responseMap() {
+    return Object.fromEntries(
+        (submission ? submission.responses : [])
+            .filter(r => r && r.question_id)
+            .map(r => [r.question_id, r.response_text || ''])
+    );
+}
+
+function feedbackMap() {
+    return Object.fromEntries(
+        (submission ? submission.feedback : [])
+            .filter(f => f && f.question_id)
+            .map(f => [f.question_id, f.feedback_text || ''])
+    );
+}
+
+function isSubmitted() {
+    return Boolean(submission && submission.submitted_at);
+}
+
+function courseById(courseId) {
+    return SHARE.courses.find(c => c.course_id === courseId) || null;
+}
+
+// The course a new submission would be keyed to: the Link Material's
+// pinned course, else the only shared course, else the picker's value.
+function resolveCourseId() {
+    if (SHARE.pinnedCourse) return SHARE.pinnedCourse;
+    if (SHARE.courses.length === 1) return SHARE.courses[0].course_id;
+    const select = document.getElementById('course-select');
+    return select ? select.value : null;
+}
+
+function renderStatus() {
+    const box = document.getElementById('share-status');
+    if (isSubmitted()) {
+        box.innerHTML = `
+            <div class="alert alert-success mb-0">
+                <i class="bi bi-check-circle-fill me-1"></i>
+                <strong>Submitted</strong>
+                ${submission.submitted_at ? 'on ' + timestamp(submission.submitted_at) : ''} —
+                you can unsubmit if your teacher hasn't returned it yet.
+            </div>`;
+    } else if (submission) {
+        box.innerHTML = `
+            <div class="alert alert-info mb-0">
+                <i class="bi bi-pencil me-1"></i>
+                Draft in progress — click <strong>Save draft</strong> to keep your answers.
+            </div>`;
+    } else {
+        box.innerHTML = `
+            <div class="alert alert-light border mb-0">
+                <i class="bi bi-hand-index-thumb me-1"></i>
+                Answer the questions below, then submit. Save your draft as you go.
+            </div>`;
+    }
+}
+
+function renderCourse() {
+    const box = document.getElementById('share-course');
+    if (!box) return;
+    if (submission) {
+        // Keyed at creation; shown read-only.
+        const course = courseById(submission.course_id);
+        box.innerHTML = `
+            <p class="text-muted small mb-0">
+                <i class="bi bi-people me-1"></i>Class:
+                ${escapeHtml(course ? course.name : submission.course_id)}
+            </p>`;
+        return;
+    }
+    if (SHARE.pinnedCourse) {
+        const course = courseById(SHARE.pinnedCourse);
+        box.innerHTML = `
+            <p class="text-muted small mb-0">
+                <i class="bi bi-people me-1"></i>Class:
+                ${escapeHtml(course ? course.name : SHARE.pinnedCourse)}
+            </p>`;
+        return;
+    }
+    if (SHARE.courses.length > 1) {
+        box.innerHTML = `
+            <label class="form-label small text-muted mb-1" for="course-select">
+                <i class="bi bi-people me-1"></i>This assignment is shared with more than
+                one of your classes — pick the one you're answering for:
+            </label>
+            <select id="course-select" class="form-select answer-input">
+                ${SHARE.courses.map(c =>
+                    `<option value="${escapeHtml(c.course_id)}">${escapeHtml(c.name)}</option>`
+                ).join('')}
+            </select>`;
+    }
+}
+
+function renderQuestions() {
+    const answers = responseMap();
+    const feedback = feedbackMap();
+    const submitted = isSubmitted();
+    document.querySelectorAll('.answer-input').forEach(input => {
+        const qid = input.dataset.qid;
+        if (qid in answers) input.value = answers[qid];
+        input.disabled = submitted;
+    });
+    document.querySelectorAll('.feedback-slot').forEach(slot => {
+        const text = feedback[slot.dataset.feedbackFor];
+        if (text) {
+            slot.innerHTML = `
+                <div class="border rounded p-2 small bg-light">
+                    <i class="bi bi-chat-left-text-fill me-1 text-success"></i>
+                    <strong>Teacher feedback:</strong> ${escapeHtml(text)}
+                </div>`;
+            slot.hidden = false;
+        } else {
+            slot.hidden = true;
+        }
+    });
+}
+
+function renderActions() {
+    const box = document.getElementById('share-actions');
+    if (isSubmitted()) {
+        box.innerHTML = `
+            <button type="button" class="btn btn-outline-secondary" onclick="unsubmit()">
+                <i class="bi bi-arrow-counterclockwise me-1"></i>Unsubmit
+            </button>`;
+    } else {
+        box.innerHTML = `
+            <button type="button" class="btn btn-outline-primary" onclick="saveDraft()">
+                <i class="bi bi-save me-1"></i>Save draft
+            </button>
+            <button type="button" class="btn btn-success" onclick="submitAssignment()">
+                <i class="bi bi-send me-1"></i>Submit assignment
+            </button>`;
+    }
+}
+
+function render() {
+    renderStatus();
+    renderCourse();
+    renderQuestions();
+    renderActions();
+}
+
+// --- data -------------------------------------------------------------------
+
+async function loadSubmission() {
+    try {
+        const response = await fetch(
+            `/api/v1/submissions/for-student?assignment_id=${encodeURIComponent(SHARE.assignmentId)}`);
+        if (response.status === 404) {
+            submission = null;
+        } else if (response.ok) {
+            submission = await response.json();
+        } else {
+            throw new Error(formatApiError(await response.json().catch(() => ({})),
+                                          'Could not load your answers'));
+        }
+        render();
+    } catch (error) {
+        showError((error.message || 'Could not load your answers.')
+                  + ' Refresh the page to try again.');
+    }
+}
+
+async function pushResponses() {
+    // Full replace: every non-empty textarea becomes the responses array.
+    const responses = [...document.querySelectorAll('.answer-input')]
+        .filter(input => input.value.trim())
+        .map(input => ({
+            question_id: input.dataset.qid,
+            response_text: input.value.trim(),
+        }));
+
+    if (submission) {
+        const response = await fetch(`/api/v1/submissions/${submission.id}`, {
+            method: 'PATCH',
+            headers: jsonHeaders(),
+            body: JSON.stringify({ responses }),
+        });
+        if (!response.ok) {
+            throw await apiError(response, 'Could not save your answers');
+        }
+        submission = await response.json();
+    } else {
+        const courseId = resolveCourseId();
+        if (!courseId) {
+            throw new Error('Pick the class you are answering for first.');
+        }
+        const response = await fetch('/api/v1/submissions', {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+                assignment_id: SHARE.assignmentId,
+                course_id: courseId,
+                responses,
+            }),
+        });
+        if (!response.ok) {
+            throw await apiError(response, 'Could not start your submission');
+        }
+        submission = await response.json();
+    }
+    dirty = false;
+}
+
+// --- actions ----------------------------------------------------------------
+
+async function saveDraft() {
+    clearError();
+    setBusy(true);
+    try {
+        await pushResponses();
+        render();
+        flashSaved('Draft saved');
+    } catch (error) {
+        showActionError(error);
+    } finally {
+        setBusy(false);
+    }
+}
+
+async function submitAssignment() {
+    clearError();
+    if (!confirm('Submit your answers? You can unsubmit and keep editing '
+                 + 'until your teacher returns the assignment.')) {
+        return;
+    }
+    setBusy(true);
+    try {
+        await pushResponses();  // creates the submission if needed
+        const response = await fetch(
+            `/api/v1/submissions/${submission.id}/submit`, {
+                method: 'POST',
+                headers: jsonHeaders(),
+            });
+        if (!response.ok) {
+            throw await apiError(response, 'Could not submit');
+        }
+        submission = await response.json();
+        render();
+        flashSaved('Submitted — nice work');
+    } catch (error) {
+        showActionError(error);
+    } finally {
+        setBusy(false);
+    }
+}
+
+async function unsubmit() {
+    clearError();
+    if (!confirm('Unsubmit to keep editing? Your teacher will see the '
+                 + 'assignment as not turned in.')) {
+        return;
+    }
+    setBusy(true);
+    try {
+        const response = await fetch(
+            `/api/v1/submissions/${submission.id}/unsubmit`, {
+                method: 'POST',
+                headers: jsonHeaders(),
+            });
+        if (!response.ok) {
+            throw await apiError(response, 'Could not unsubmit');
+        }
+        submission = await response.json();
+        render();
+    } catch (error) {
+        showActionError(error);
+    } finally {
+        setBusy(false);
+    }
+}
+
+// --- helpers ----------------------------------------------------------------
+
+function jsonHeaders() {
+    return {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+    };
+}
+
+async function apiError(response, fallback) {
+    // Auth-bridge failures arrive as {error: {code, message}}; the
+    // enrollment guard as {error: "…", code: "not_enrolled"}. Surface
+    // the message, plus a connect CTA when it is remediable in-browser.
+    const data = await response.json().catch(() => ({}));
+    const code = (data.error && data.error.code) || data.code || '';
+    const message = formatApiError(data, fallback);
+    const connectable = [
+        'classroom_not_connected', 'classroom_missing_scopes',
+        'campus_session_expired',
+    ];
+    if (connectable.includes(code)) {
+        return Object.assign(new Error(message), {
+            connectUrl: SHARE.profileIntegrationsUrl,
+        });
+    }
+    return new Error(message);
+}
+
+function showError(message, connectUrl) {
+    const box = document.getElementById('share-error');
+    box.innerHTML = escapeHtml(message)
+        + (connectUrl
+            ? ` <a href="${escapeHtml(connectUrl)}" target="_blank" rel="noopener"`
+              + ` class="alert-link">Reconnect Google Classroom</a>`
+            : '');
+    box.classList.remove('d-none');
+}
+
+function clearError() {
+    document.getElementById('share-error').classList.add('d-none');
+}
+
+function showActionError(error) {
+    showError(error.message || 'Something went wrong. Please try again.',
+              error.connectUrl);
+}
+
+function setBusy(busy) {
+    document.querySelectorAll('#share-actions button')
+        .forEach(btn => { btn.disabled = busy; });
+}
+
+function flashSaved(message) {
+    const box = document.getElementById('share-status');
+    // The next render() rewrites this; a quick confirm is enough.
+    const alert = box.querySelector('.alert');
+    if (alert) {
+        const note = document.createElement('span');
+        note.className = 'badge bg-secondary ms-2';
+        note.textContent = message;
+        alert.appendChild(note);
+    }
+}
+
+function timestamp(dateStr) {
+    const date = new Date(dateStr);
+    return isNaN(date)
+        ? dateStr
+        : date.toLocaleString('en-SG', {dateStyle: 'medium', timeStyle: 'short'});
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('input', event => {
+    if (event.target.classList && event.target.classList.contains('answer-input')) {
+        dirty = true;
+    }
+});
+
+window.addEventListener('beforeunload', event => {
+    if (dirty && !isSubmitted()) {
+        event.preventDefault();
+        event.returnValue = '';
+    }
+});
+
+// Load on page view
+loadSubmission();
+</script>
+{% endif %}
 {% endblock %}

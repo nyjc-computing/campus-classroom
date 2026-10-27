@@ -10,6 +10,9 @@ from dataclasses import asdict
 import flask
 from campus_python.errors import APIError
 
+from .. import classroom_auth as cauth
+from .. import enrollment
+
 
 def upstream_error_response(e: APIError):
     """Pass a campus APIError through to the client, preserving the upstream
@@ -39,23 +42,44 @@ def register_routes(app: flask.Flask, login_manager):
     @app.get("/api/v1/assignments")
     @login_manager.login_required
     def list_assignments(**_):
-        """List the current user's assignments.
+        """List the assignments visible to the current user (PRD §6.9).
 
-        Always scoped to the signed-in user (PRD §6.9): a caller may not
-        enumerate another user's assignments by passing a created_by
-        filter. Students see only assignments assigned to them once the
-        enrollment listing lands (#28); until then their list is empty.
+        Rule 4 (#14): own assignments (created_by = me) plus assignments
+        assigned to the caller via Google Classroom — those whose
+        classroom_links include one of their courses. A client-supplied
+        created_by filter is ignored, so no caller can enumerate another
+        user's assignments; results are the intersection computed here,
+        newest first.
 
-        Returns:
-            JSON array of assignments
+        The Classroom course lookup degrades to own-only on any
+        auth-bridge failure (no connection, missing scopes, Classroom
+        down): this is a discovery listing, and every content read or
+        attempt still passes the rule-2/3 enrollment gates, so the
+        degradation cannot leak anything — it only ever hides.
         """
         user_id = flask.g.user.id
         campus = flask.current_app.campus
 
-        with campus.with_user_session() as client:
-            assignments = client.api.assignments.list(created_by=user_id)
+        try:
+            my_courses = enrollment.user_courses()
+        except cauth.ClassroomAuthError as err:
+            flask.current_app.logger.warning(
+                "Assignment listing degraded to own-only for %s: %s (%s)",
+                user_id, err.code, err.message,
+            )
+            my_courses = {}
 
-        return flask.jsonify([a.to_resource() for a in assignments])
+        with campus.with_user_session() as client:
+            assignments = client.api.assignments.list()
+
+        visible = [
+            a for a in assignments
+            if str(getattr(a, "created_by", "")) == str(user_id)
+            or enrollment.linked_course_ids(a) & my_courses.keys()
+        ]
+        visible.sort(key=lambda a: str(getattr(a, "created_at", "")), reverse=True)
+
+        return flask.jsonify([a.to_resource() for a in visible])
 
     @app.post("/api/v1/assignments")
     @login_manager.login_required
