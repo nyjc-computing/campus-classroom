@@ -162,6 +162,25 @@ reference = "main"
 resolved_reference = "695992d8afbc1fa9bf8c1b084f39bc3d680fed3e"
 
 [[package]]
+name = "campus-common"
+version = "0.1.0"
+description = "Campus shared kernel: env, errors, introspect, schema, utils, validation - PEP 420 namespace portion under campus/common"
+optional = false
+python-versions = ">=3.11.0,<3.15"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+bcrypt = "^5.0.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/nyjc-computing/campus-common.git"
+reference = "main"
+resolved_reference = "995bc2c220ff2483ebe4b6bad582a30e0b1e661a"
+
+[[package]]
 name = "campus-suite"
 version = "0.1.16"
 description = "Campus Suite - Complete education management platform deployment orchestrator and client library"
@@ -175,6 +194,7 @@ develop = false
 bcrypt = "^5.0.0"
 boto3 = "^1.35.0"
 campus-api-python = {git = "https://github.com/nyjc-computing/campus-api-python.git", branch = "main"}
+campus-common = {git = "https://github.com/nyjc-computing/campus-common.git", branch = "main"}
 flask = "^3.0.0"
 gunicorn = "^26.2.0"
 jsonschema = "^4.23.0"
@@ -187,7 +207,7 @@ werkzeug = "^3.0.0"
 type = "git"
 url = "https://github.com/nyjc-computing/campus.git"
 reference = "weekly"
-resolved_reference = "56ee636eead7ee1bc6210e0a47c322b893560831"
+resolved_reference = "ab674bd34aa652b84f0b8ec886e9020c6871c588"
 
 [[package]]
 name = "certifi"
@@ -1070,4 +1090,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "49b2d745b47b259dee99391e24737de8a07ea326a39431de1d48e3b743f47d6c"
+content-hash = "1db9b8d3b7cd6597ee579683137d154f1f0fa4a19a8f50f3cbcc493ddf05a479"
