@@ -16,6 +16,7 @@ python-dotenv = "^1.2.1"
 # Campus internal dependencies
 campus-api-python = {git = "https://github.com/nyjc-computing/campus-api-python.git", branch = "main"}
 campus-suite = {git = "https://github.com/nyjc-computing/campus.git", branch = "weekly"}
+campus-common = {git = "https://github.com/nyjc-computing/campus-common.git", branch = "main"}
 
 [tool.pyright]
 useLibraryCodeForTypes = true
