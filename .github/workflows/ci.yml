@@ -40,6 +40,10 @@ jobs:
       CLIENT_ID: ci-dummy
       CLIENT_SECRET: ci-dummy
       PUBLIC_URL: http://localhost:5000
+      # Env-only URL resolution (campus-common 0.3.0): no baked-in
+      # topology; the app resolves service origins from the env. No
+      # network calls happen before the smoke assertions.
+      BASE_URL: https://campus.test
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
