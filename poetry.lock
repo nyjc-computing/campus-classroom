@@ -384,7 +384,7 @@ optional = false
 python-versions = ">=3.11.0,<3.15"
 groups = ["main"]
 files = [
-    {file = "flask_campus-0.1.0-py3-none-any.whl", hash = "sha256:837291068a8245ee5ba6575fa217419e9599be73caa48174a2f3f7283b4a99ed"},
+    {file = "flask_campus-0.1.0-py3-none-any.whl", hash = "sha256:4ba08a7e90e881aefdc83cae46a2d2760a63b072f51c8931339f778ef3b7a9d1"},
 ]
 
 [package.dependencies]
