@@ -34,7 +34,7 @@ os.environ["SECRET_KEY"] = "verify-issue-13-secret"
 os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-issue-13-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-issue-13-client-secret")
 
-import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
+import campus.flask_campus.context as flask_context  # noqa: E402
 import flask  # noqa: E402
 
 from apps.classroom import create_app  # noqa: E402
@@ -52,7 +52,7 @@ def check(name, cond, detail=""):
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
-def _fake_push_context(_self):
+def _fake_push_context(*_args):  # noqa: ARG001 (context seam patch; args unused)
     flask.g.user = None
     flask.g.device = None
     user = flask.session.get("verify_user")
@@ -60,7 +60,7 @@ def _fake_push_context(_self):
         flask.g.user = SimpleNamespace(id=user["id"], email=user["email"])
 
 
-campus_auth_v1.AuthRoot.push_context = _fake_push_context
+flask_context.push_context = _fake_push_context
 
 app = create_app()
 client = app.test_client()
