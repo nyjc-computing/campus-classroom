@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-10-secret"
 
-import campus_python.auth.v1 as campus_auth_v1  # noqa: E402
+import campus.flask_campus.context as flask_context  # noqa: E402
 import flask  # noqa: E402
 import requests  # noqa: E402
 import requests.adapters  # noqa: E402
@@ -358,7 +358,7 @@ FAKE_CAMPUS = SimpleNamespace(
 
 
 # App with a faked Campus login (push_context reads verify_user from session)
-def _fake_push_context(_self):
+def _fake_push_context(*_args):  # noqa: ARG001 (context seam patch; args unused)
     flask.g.user = None
     flask.g.device = None
     user = flask.session.get("verify_user")
@@ -366,7 +366,7 @@ def _fake_push_context(_self):
         flask.g.user = SimpleNamespace(id=user["id"], email=user["email"])
 
 
-campus_auth_v1.AuthRoot.push_context = _fake_push_context
+flask_context.push_context = _fake_push_context
 
 app = create_app()
 app.testing = True  # propagate exceptions: verify, not serve
