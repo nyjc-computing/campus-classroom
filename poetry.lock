@@ -143,7 +143,7 @@ crt = ["awscrt (==0.38.0)"]
 
 [[package]]
 name = "campus-api-python"
-version = "0.3.1"
+version = "0.5.0"
 description = "Campus API for Python projects"
 optional = false
 python-versions = ">=3.11,<3.15"
@@ -154,14 +154,13 @@ develop = false
 [package.dependencies]
 campus-common = {url = "https://github.com/nyjc-computing/campus-common/releases/download/v0.3.0/campus_common-0.3.0-py3-none-any.whl"}
 campus-model = {url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.1.2/campus_model-0.1.2-py3-none-any.whl"}
-flask = "^3.0.0"
 requests = "^2.32.4"
 
 [package.source]
 type = "git"
 url = "https://github.com/nyjc-computing/campus-api-python.git"
 reference = "main"
-resolved_reference = "112d4c61d8f22a5e4140f33b3647fa92b587dae8"
+resolved_reference = "3e104ffd6f64c8d07142d98c1782c29237e62dd1"
 
 [[package]]
 name = "campus-common"
@@ -227,7 +226,7 @@ werkzeug = "^3.0.0"
 type = "git"
 url = "https://github.com/nyjc-computing/campus.git"
 reference = "weekly"
-resolved_reference = "0d6759bf25cd0c032005e10477e00a1f238415e0"
+resolved_reference = "9dad428d3afd2b0dcad0890b9edd6c3bb7afeb99"
 
 [[package]]
 name = "certifi"
