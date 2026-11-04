@@ -11,6 +11,8 @@ packages = [{include = "apps/classroom"}]
 # 3.14 (bugfix tier) is not yet supported here.
 python = ">=3.11,<3.14"
 flask = "^3.0.0"
+# WSGI server (Procfile) - was transitive via campus-suite until #993
+gunicorn = "^26.2.0"
 python-dotenv = "^1.2.1"
 
 # Campus internal dependencies
