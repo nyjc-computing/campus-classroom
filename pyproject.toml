@@ -18,7 +18,7 @@ python-dotenv = "^1.2.1"
 # Campus internal dependencies
 campus-api-python = {git = "https://github.com/nyjc-computing/campus-api-python.git", branch = "main"}
 # Flask consumer layer (flask_campus + audit middleware) - the suite is no longer a runtime dep (campus#993)
-flask-campus = {url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.1.0/flask_campus-0.1.0-py3-none-any.whl"}
+flask-campus = {url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.1.2/flask_campus-0.1.2-py3-none-any.whl"}
 campus-common = {url = "https://github.com/nyjc-computing/campus-common/releases/download/v0.3.1/campus_common-0.3.1-py3-none-any.whl"}
 
 [tool.pyright]
