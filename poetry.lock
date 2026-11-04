@@ -378,13 +378,13 @@ dotenv = ["python-dotenv"]
 
 [[package]]
 name = "flask-campus"
-version = "0.1.0"
+version = "0.1.2"
 description = "Flask consumer layer for Campus apps: flask_campus glue + audit middleware/client/http - PEP 420 namespace portions under campus/flask_campus and campus/audit"
 optional = false
 python-versions = ">=3.11.0,<3.15"
 groups = ["main"]
 files = [
-    {file = "flask_campus-0.1.0-py3-none-any.whl", hash = "sha256:4ba08a7e90e881aefdc83cae46a2d2760a63b072f51c8931339f778ef3b7a9d1"},
+    {file = "flask_campus-0.1.2-py3-none-any.whl", hash = "sha256:6a41b9d7132147c0a56271a9d3a0e2c7f5ff3f53c81c2480f02ebfc9916fdbad"},
 ]
 
 [package.dependencies]
@@ -397,7 +397,7 @@ werkzeug = ">=3.0.0,<4.0.0"
 
 [package.source]
 type = "url"
-url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.1.0/flask_campus-0.1.0-py3-none-any.whl"
+url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.1.2/flask_campus-0.1.2-py3-none-any.whl"
 
 [[package]]
 name = "gunicorn"
@@ -701,4 +701,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "c5c6b03116b82e9e5a2d02509172ce34b0287fdcf615cb36ead0a8efe72e7be7"
+content-hash = "92687a0966abca34c17184cf4de4ab5f1ece242bfe5508a8e9c02e44955e4fec"
