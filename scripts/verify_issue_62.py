@@ -533,6 +533,15 @@ check("/embed 404s without EMBED_MODE on this deployment",
 os.environ["EMBED_MODE"] = "1"
 os.environ["EMBED_PARENT_ORIGIN"] = "http://localhost:5000"
 
+# campus-apphost containment (#81): EMBED_MODE deployments serve
+# /embed and nothing else — no login, no API, no share pages.
+check("apphost mode refuses every non-embed route",
+      student_client.get("/").status_code == 404
+      and student_client.get(f"/a/{ASSIGNMENT_ID}").status_code == 404
+      and student_client.get("/api/v1/assignments").status_code == 404
+      and student_client.get("/sign-in").status_code == 404,
+      "GET / /a/{id} /api/v1/assignments /sign-in")
+
 resp = student_client.get(f"/embed/{ASSIGNMENT_ID}/q1")
 check("/embed 403s without a token", resp.status_code == 403,
       f"status={resp.status_code}")
@@ -566,6 +575,8 @@ check("a valid token for an unknown question 404s",
 
 os.environ.pop("EMBED_MODE", None)
 os.environ.pop("EMBED_PARENT_ORIGIN", None)
+check("without EMBED_MODE the full app serves again",
+      student_client.get(f"/a/{ASSIGNMENT_ID}").status_code == 200)
 
 # ---------------------------------------------------------------------------
 print()

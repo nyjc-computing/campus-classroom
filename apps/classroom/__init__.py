@@ -134,6 +134,19 @@ def create_app():
     routes.classroom_sync.register_routes(app, login_manager)
     routes.documents.register_routes(app, login_manager)
 
+    # campus-apphost containment (#81): a deployment running EMBED_MODE=1
+    # is the dedicated app-hosting origin (campus-apphost) — it serves
+    # /embed and nothing else. No login surface, no /api/v1/*, and no
+    # session cookies are ever set on that origin, so embed-origin
+    # scripts have nothing of ours to talk to even if the origin's URL
+    # leaks. Checked per request so the verify harness can flip the
+    # flag; in real deployments it's set once and never changes.
+    @app.before_request
+    def _apphost_embed_only():
+        if (documents.embed_mode()
+                and not flask.request.path.startswith("/embed/")):
+            flask.abort(404)
+
     # Register UI routes
     @app.get("/")
     def index():
