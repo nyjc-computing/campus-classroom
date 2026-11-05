@@ -87,18 +87,18 @@ def register_routes(app: flask.Flask, login_manager):
         campus = flask.current_app.campus
         with campus.with_user_session() as client:
             apps = client.api.hostedapps.list()
-        # Redirect-after-publish (#81): publishApp() lands back here with
-        # ?published=<slug>, so the table renders fresh WITH the banner.
+        # Redirect-after-deploy (#81): publishApp() lands back here with
+        # ?deployed=<slug>, so the table renders fresh WITH the banner.
         return flask.render_template(
             "publish.html",
             apps=apps,
-            published=flask.request.args.get("published"),
+            deployed=flask.request.args.get("deployed"),
         )
 
     @app.get("/api/v1/apps")
     @login_manager.login_required
     def list_apps(**_):
-        """List published apps for the document-question picker (#81).
+        """List deployed apps for the document-question picker (#81).
 
         Serves both deployments: the main app's question builder calls
         this for the picker; the apphost publish page server-renders
