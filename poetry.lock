@@ -91,7 +91,7 @@ files = [
 
 [[package]]
 name = "campus-api-python"
-version = "0.5.1"
+version = "0.6.0"
 description = "Campus API for Python projects"
 optional = false
 python-versions = ">=3.11,<3.15"
@@ -108,7 +108,7 @@ requests = "^2.32.4"
 type = "git"
 url = "https://github.com/nyjc-computing/campus-api-python.git"
 reference = "main"
-resolved_reference = "cfe6da75bcb3a1477f627278168208d48a8eb7ef"
+resolved_reference = "8806d68d4f4a203f719dd1f6815067348088501c"
 
 [[package]]
 name = "campus-common"
