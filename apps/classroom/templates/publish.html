@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}Publish an app{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4 mt-md-5">
+    <h2 class="mb-1"><i class="bi bi-cloud-upload me-2"></i>Publish an app</h2>
+    <p class="text-muted">
+        Upload a single-file HTML app (≤ 2 MB). Published apps appear in the
+        document-question picker when teachers create assignments. Re-publishing
+        an existing app's name replaces it in place — every assignment referencing
+        it starts serving the new version.
+    </p>
+
+    <div id="publish-status" class="mb-3"></div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="app-name" class="form-label">App name <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="app-name"
+                       placeholder="e.g. quest-dom-explorer" required>
+                <div class="form-text">Letters, numbers, dots and dashes. Serves as
+                    <code>apps/&lt;name&gt;</code>.</div>
+            </div>
+            <div class="mb-3">
+                <label for="app-file" class="form-label">HTML file <span class="text-danger">*</span></label>
+                <input type="file" class="form-control" id="app-file"
+                       accept=".html,.htm,text/html" required>
+                <div class="form-text" id="app-file-status">No file selected.</div>
+            </div>
+            <button type="button" id="publish-btn" class="btn btn-primary"
+                    onclick="publishApp()">
+                <i class="bi bi-upload me-1"></i>Publish
+            </button>
+        </div>
+    </div>
+
+    <h5 class="mb-3">Published apps ({{ apps | length }})</h5>
+    {% if apps %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th>Slug</th>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Updated</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for app in apps %}
+            <tr>
+                <td><code>{{ app.slug }}</code></td>
+                <td>{{ app.name or app.slug }}</td>
+                <td>{{ app.size }} B</td>
+                <td>{{ app.updated_at | timestamp }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No apps published yet.</p>
+    {% endif %}
+
+    <p class="text-center text-muted small mt-4">
+        <a href="{{ url_for('auth.logout') }}" class="text-reset">Sign out</a>
+    </p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const MAX_APP_BYTES = 2000000;
+let appHtml = null;
+
+document.getElementById('app-file').addEventListener('change', function () {
+    const file = this.files && this.files[0];
+    appHtml = null;
+    const status = document.getElementById('app-file-status');
+    if (!file) {
+        status.textContent = 'No file selected.';
+        return;
+    }
+    if (file.size > MAX_APP_BYTES) {
+        status.textContent = `"${file.name}" is ${Math.round(file.size / 1024)} KB — apps are limited to 2 MB.`;
+        this.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        appHtml = String(reader.result || '');
+        status.textContent = `${file.name} · ${Math.max(1, Math.round(appHtml.length / 1024))} KB ready.`;
+    };
+    reader.readAsText(file);
+});
+
+async function publishApp() {
+    const name = document.getElementById('app-name').value.trim();
+    const box = document.getElementById('publish-status');
+    box.innerHTML = '';
+    if (!name || appHtml === null) {
+        box.innerHTML = '<div class="alert alert-warning mb-0">Pick a name and an HTML file first.</div>';
+        return;
+    }
+    const btn = document.getElementById('publish-btn');
+    btn.disabled = true;
+    try {
+        const response = await fetch('/api/v1/apps', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({ name: name, html: appHtml }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Publishing failed.')}</div>`;
+            return;
+        }
+        box.innerHTML = `
+            <div class="alert alert-success mb-0">
+                <i class="bi bi-check-circle-fill me-1"></i>
+                ${data.replaced ? 'Replaced' : 'Published'} <code>${escapeText(data.slug)}</code>.
+                Teachers can now pick it when creating a document question${data.replaced ? ' — referencing assignments serve this version immediately' : ''}.
+            </div>`;
+    } catch (error) {
+        box.innerHTML = '<div class="alert alert-danger mb-0">Publishing failed. Please try again.</div>';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function escapeText(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

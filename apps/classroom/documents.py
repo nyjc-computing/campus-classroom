@@ -35,6 +35,13 @@ EXPORT_NONCE_TTL_SECONDS = 10 * 60      # challenge → save/submit window
 DOCUMENT_TYPE_ID = "document"
 NONCE_META_NAME = "campus-export-nonce"
 
+# Published apps live in campus.api.files under this slug prefix
+# (#81): publishers upload via campus-apphost, classroom questions
+# reference `data: {slug}`, and /embed serves the file's current
+# bytes — replacing a slug's content updates referencing assignments
+# in place.
+APPS_SLUG_PREFIX = "apps/"
+
 # Mirror the campus questionschemas caps (client-side hints + this
 # app's enforcement must agree with what campus will 422 on).
 MAX_DOCUMENT_CHARS = 2_000_000
@@ -305,3 +312,32 @@ def embed_url_for(assignment_id: str, question_id: str) -> str | None:
         return None
     token = mint_embed_token(assignment_id, question_id)
     return f"{origin}/embed/{assignment_id}/{question_id}?t={token}"
+
+
+def sanitize_app_slug(name: str) -> str | None:
+    """Derive a files slug under apps/ from a publisher-provided name.
+
+    Lower-cases, maps runs of disallowed characters to '-', and
+    enforces the files slug charset. Returns None when nothing usable
+    remains (the caller answers 400).
+    """
+    cleaned = re.sub(r"[^a-z0-9._/-]+", "-", name.strip().lower())
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-.")
+    if not cleaned:
+        return None
+    slug = f"{APPS_SLUG_PREFIX}{cleaned}"
+    if len(slug) > 512 or not re.fullmatch(r"[A-Za-z0-9._/-]+", slug):
+        return None
+    return slug
+
+
+def question_app_slug(question) -> str | None:
+    """The files slug a document question references, when it uses the
+    registry-reference shape (data.slug; legacy questions carry
+    data.html instead)."""
+    data = getattr(question, "data", None)
+    if isinstance(data, dict):
+        slug = data.get("slug")
+        if isinstance(slug, str) and slug:
+            return slug
+    return None

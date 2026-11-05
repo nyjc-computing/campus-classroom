@@ -235,8 +235,8 @@ function renderQuestion(q) {
     const level = q.id.split('.').length;
     const indent = (level - 1) * 24;
     const typeBadge = q.type === 'document'
-        ? `<span class="badge text-bg-light border">Interactive document${q.data && q.data.html
-            ? ` · ${Math.max(1, Math.round((q.data.html || '').length / 1024))} KB` : ''}</span>`
+        ? `<span class="badge text-bg-light border">Interactive document${q.data && q.data.slug
+            ? ` · ${escapeHtml(q.data.slug)}` : ''}</span>`
         : '';
 
     return `

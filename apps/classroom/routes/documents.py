@@ -71,6 +71,95 @@ def register_routes(app: flask.Flask, login_manager):
         nonce, expires_at = documents.mint_export_nonce(assignment_id, question_id)
         return flask.jsonify({"nonce": nonce, "expires_at": expires_at})
 
+    @app.get("/publish")
+    @login_manager.login_required
+    def publish_apps(**_):
+        """campus-apphost publisher UI (#81): upload and list apps.
+
+        Exists only on the apphost deployment — uploading lives on the
+        hosting origin by design. Any signed-in Campus user may publish
+        in dev (immediate, attribution via uploaded_by_user_id, captured
+        by campus audit's session journey); approval gating arrives
+        before prod.
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
+            apps = client.api.files.list(prefix=documents.APPS_SLUG_PREFIX)
+        return flask.render_template("publish.html", apps=apps)
+
+    @app.get("/api/v1/apps")
+    @login_manager.login_required
+    def list_apps(**_):
+        """List published apps for the document-question picker (#81).
+
+        Serves both deployments: the main app's question builder calls
+        this for the picker; the apphost publish page server-renders
+        its own list.
+        """
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
+            apps = client.api.files.list(prefix=documents.APPS_SLUG_PREFIX)
+        return flask.jsonify([
+            {
+                "slug": app.get("slug"),
+                "name": app.get("name"),
+                "size": app.get("size"),
+                "updated_at": app.get("updated_at"),
+            }
+            for app in apps
+        ])
+
+    @app.post("/api/v1/apps")
+    @login_manager.login_required
+    def api_publish_app(**_):
+        """Publish an app by upserting into campus.api.files (#81).
+
+        Request body: {name: str, html: str} — the name derives the
+        slug (apps/<sanitised>); html is the complete single-file
+        document. Upsert semantics: an existing slug is replaced in
+        place, which live-updates every referencing assignment. Only
+        on the apphost deployment (EMBED_MODE=1).
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        data = flask.request.get_json() or {}
+        slug = documents.sanitize_app_slug(data.get("name") or "")
+        html = data.get("html") or ""
+        if not slug:
+            return flask.jsonify({
+                "error": "Provide an app name (letters, numbers, dots, "
+                         "dashes)."
+            }), 400
+        if not html.strip() or "<" not in html:
+            return flask.jsonify({
+                "error": "The app must be a non-empty HTML document."
+            }), 400
+        if len(html) > documents.MAX_DOCUMENT_CHARS:
+            return flask.jsonify(
+                {"error": "The app exceeds the 2 MB limit."}), 400
+
+        campus = flask.current_app.campus
+        with campus.with_user_session() as client:
+            replaced = True
+            try:
+                client.api.files.get_meta(slug)
+            except Exception as e:
+                if "not found" not in str(e).lower():
+                    raise
+                replaced = False
+            meta = client.api.files.put_by_slug(
+                slug, html, content_type="text/html"
+            )
+        return flask.jsonify({
+            "slug": slug,
+            "name": meta.get("name") or slug.removeprefix(
+                documents.APPS_SLUG_PREFIX),
+            "replaced": replaced,
+            "updated_at": meta.get("updated_at"),
+        }), (200 if replaced else 201)
+
     @app.get("/embed/<assignment_id>/<question_id>")
     def embed_document(assignment_id: str, question_id: str):
         """Serve a document question's HTML from the embed origin (#78).
@@ -100,7 +189,25 @@ def register_routes(app: flask.Flask, login_manager):
         if question is None or not documents.is_document(question):
             flask.abort(404)
 
-        html = (getattr(question, "data", None) or {}).get("html", "")
+        # Two source shapes (#62/#81): legacy inline html, or a
+        # registry reference (data.slug) — the file's CURRENT bytes,
+        # so publisher updates propagate to sent assignments.
+        question_data = getattr(question, "data", None) or {}
+        html = question_data.get("html")
+        slug = documents.question_app_slug(question)
+        if not html and slug:
+            try:
+                with campus.with_app_session() as client:
+                    html = client.api.files.get_content(slug).decode(
+                        "utf-8", errors="replace"
+                    )
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    flask.abort(404)
+                raise
+        if not html:
+            flask.abort(404)
+
         parent = documents.parent_origin()
         html = documents.inject_export_runtime(html, question_id, parent)
 

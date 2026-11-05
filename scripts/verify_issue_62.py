@@ -57,6 +57,9 @@ DOC_HTML = ("<!DOCTYPE html><html><head><title>Doc</title></head>"
             "<p onclick=\"evil()\">x</p>"
             "<a href=\"javascript:evil()\">y</a></body></html>")
 
+SLUG_APP_HTML = ("<!DOCTYPE html><html><head><title>Registry app</title></head>"
+                 "<body>registry-app-marker</body></html>")
+
 TEXT_QUESTION = SimpleNamespace(
     id="q2", prompt="", question="Explain in your own words.",
     type="free-response", data=None,
@@ -64,6 +67,14 @@ TEXT_QUESTION = SimpleNamespace(
 DOC_QUESTION = SimpleNamespace(
     id="q1", prompt="", question="Explore the document, then submit.",
     type="document", data={"html": DOC_HTML},
+)
+SLUG_QUESTION = SimpleNamespace(
+    id="q3", prompt="", question="Use the registry app, then submit.",
+    type="document", data={"slug": "apps/probe"},
+)
+GHOST_SLUG_QUESTION = SimpleNamespace(
+    id="q4", prompt="", question="References a deleted app.",
+    type="document", data={"slug": "apps/ghost"},
 )
 
 failures = []
@@ -258,10 +269,54 @@ class FakeSubmissionResource:
         self._current().submitted_at = None
 
 
+class FakeFiles:
+    """campus.api files stand-in (registry-backed apps, #81)."""
+
+    def __init__(self, store, calls):
+        self._store = store
+        self._calls = calls
+
+    def list(self, prefix=None):
+        self._calls.append(("files.list", prefix))
+        return [
+            {k: v for k, v in record.items() if k != "content"}
+            for slug, record in self._store.items()
+            if slug.startswith(prefix or "")
+        ]
+
+    def get_meta(self, slug):
+        self._calls.append(("files.get_meta", slug))
+        if slug not in self._store:
+            raise Exception("file not found")
+        return {k: v for k, v in self._store[slug].items() if k != "content"}
+
+    def get_content(self, slug):
+        self._calls.append(("files.get_content", slug))
+        if slug not in self._store:
+            raise Exception("file not found")
+        return self._store[slug]["content"].encode("utf-8")
+
+    def put_by_slug(self, slug, data, content_type=None):
+        self._calls.append(("files.put_by_slug", slug, content_type))
+        record = {
+            "slug": slug,
+            "name": None,
+            "size": len(data),
+            "content_type": content_type or "application/octet-stream",
+            "updated_at": "2026-11-05T00:00:00Z",
+        }
+        self._store[slug] = {
+            **record,
+            "content": data if isinstance(data, str) else data.decode("utf-8"),
+        }
+        return record
+
+
 class FakeAPI:
-    def __init__(self, assignments, submissions):
+    def __init__(self, assignments, submissions, files):
         self.assignments = assignments
         self.submissions = submissions
+        self.files = files
 
 
 class FakeCampus:
@@ -281,16 +336,30 @@ class FakeCampus:
 
 ASSIGNMENTS = {
     ASSIGNMENT_ID: FakeAssignment(
-        ASSIGNMENT_ID, TEACHER, [DOC_QUESTION, TEXT_QUESTION]),
+        ASSIGNMENT_ID, TEACHER,
+        [DOC_QUESTION, TEXT_QUESTION, SLUG_QUESTION, GHOST_SLUG_QUESTION]),
 }
 SUBMISSIONS = {
     "s1": FakeSubmission("s1", ASSIGNMENT_ID, STUDENT),
 }
+FILES_STORE = {
+    "apps/probe": {
+        "slug": "apps/probe",
+        "name": "Probe App",
+        "size": len(SLUG_APP_HTML),
+        "content_type": "text/html",
+        "updated_at": "2026-11-05T00:00:00Z",
+        "content": SLUG_APP_HTML,
+    },
+}
 CALLS = []
 
 app = create_app()
-app.campus = FakeCampus(FakeAPI(FakeAssignments(ASSIGNMENTS, CALLS),
-                                FakeSubmissions(SUBMISSIONS, CALLS)))
+app.campus = FakeCampus(FakeAPI(
+    FakeAssignments(ASSIGNMENTS, CALLS),
+    FakeSubmissions(SUBMISSIONS, CALLS),
+    FakeFiles(FILES_STORE, CALLS),
+))
 
 # Enrollment seams (the bridge is never exercised offline).
 def _enrolled(_assignment):
@@ -498,6 +567,8 @@ check("document question renders an iframe to the docs deployment",
       resp.status_code == 200
       and f'src="{DOCS_ORIGIN}/embed/{ASSIGNMENT_ID}/q1?t=' in page,
       f"status={resp.status_code}")
+check("slug-referencing question renders its own embed iframe",
+      f'/embed/{ASSIGNMENT_ID}/q3?t=' in page)
 check("the iframe is sandboxed allow-scripts allow-same-origin",
       'sandbox="allow-scripts allow-same-origin"' in page)
 check("doc HTML is never inlined into the page", "alert(1)" not in page)
@@ -532,6 +603,21 @@ check("/embed 404s without EMBED_MODE on this deployment",
 
 os.environ["EMBED_MODE"] = "1"
 os.environ["EMBED_PARENT_ORIGIN"] = "http://localhost:5000"
+
+# Publisher surface carve-out (#81): the apphost deployment serves the
+# publisher UI and the apps API alongside /embed.
+resp = student_client.get("/publish")
+check("publisher page renders on apphost for a signed-in user",
+      resp.status_code == 200 and "Publish an app" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
+CALLS.clear()
+resp = student_client.get("/api/v1/apps")
+listing = resp.get_json()
+check("apps API lists the registry with the apps/ prefix",
+      resp.status_code == 200
+      and listing and listing[0]["slug"] == "apps/probe"
+      and ("files.list", "apps/") in CALLS,
+      f"status={resp.status_code} {listing}")
 
 # campus-apphost containment (#81): EMBED_MODE deployments serve
 # /embed and nothing else — no login, no API, no share pages.
@@ -568,6 +654,55 @@ resp = student_client.get(
 check("a token for another question 403s", resp.status_code == 403,
       f"status={resp.status_code}")
 
+CALLS.clear()
+resp = student_client.get(
+    f"/embed/{ASSIGNMENT_ID}/q3?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q3')}")
+body = resp.get_data(as_text=True)
+check("slug-referencing question serves the registry app's current bytes",
+      resp.status_code == 200 and "registry-app-marker" in body
+      and "CAMPUS_EMBED" in body
+      and ("files.get_content", "apps/probe") in CALLS,
+      f"status={resp.status_code}")
+
+resp = student_client.get(
+    f"/embed/{ASSIGNMENT_ID}/q4?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q4')}")
+check("a slug whose file is gone answers 404",
+      resp.status_code == 404, f"status={resp.status_code}")
+
+# Publishing (#81): upsert into campus.api.files under apps/.
+CALLS.clear()
+resp = student_client.post("/api/v1/apps", json={
+    "name": "Probe Two",
+    "html": "<html><body>second app</body></html>",
+})
+check("publishing a new app returns 201 with its derived slug",
+      resp.status_code == 201
+      and resp.get_json()["slug"] == "apps/probe-two"
+      and resp.get_json()["replaced"] is False,
+      f"status={resp.status_code} {resp.get_data(as_text=True)[:200]}")
+check("the upload upserts the file with text/html",
+      ("files.put_by_slug", "apps/probe-two", "text/html") in CALLS
+      and "second app" in FILES_STORE["apps/probe-two"]["content"])
+
+resp = student_client.post("/api/v1/apps", json={
+    "name": "probe---two",
+    "html": "<html><body>second app v2</body></html>",
+})
+check("re-publishing the same slug replaces in place (200, replaced)",
+      resp.status_code == 200 and resp.get_json()["replaced"] is True
+      and "second app v2" in FILES_STORE["apps/probe-two"]["content"],
+      f"status={resp.status_code}")
+
+resp = student_client.post("/api/v1/apps", json={
+    "name": "!!!", "html": "<html></html>"})
+check("an unusable name answers 400",
+      resp.status_code == 400, f"status={resp.status_code}")
+
+resp = student_client.post("/api/v1/apps", json={
+    "name": "too-big", "html": "<p>" + "x" * (documents.MAX_DOCUMENT_CHARS + 1)})
+check("an oversize app answers 400",
+      resp.status_code == 400, f"status={resp.status_code}")
+
 ghost_token = documents.mint_embed_token(ASSIGNMENT_ID, "q_ghost")
 resp = student_client.get(f"/embed/{ASSIGNMENT_ID}/q_ghost?t={ghost_token}")
 check("a valid token for an unknown question 404s",
@@ -577,6 +712,9 @@ os.environ.pop("EMBED_MODE", None)
 os.environ.pop("EMBED_PARENT_ORIGIN", None)
 check("without EMBED_MODE the full app serves again",
       student_client.get(f"/a/{ASSIGNMENT_ID}").status_code == 200)
+check("uploading lives only on the apphost deployment",
+      student_client.post("/api/v1/apps", json={
+          "name": "x", "html": "<html></html>"}).status_code == 404)
 
 # ---------------------------------------------------------------------------
 print()
