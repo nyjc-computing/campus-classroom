@@ -77,7 +77,15 @@ async function loadSubmission() {
     }
 }
 
+// Document snapshots (#78) are kept out of the template strings (a
+// multi-MB srcdoc does not belong in an attribute) and rendered into a
+// script-disabled iframe only on demand.
+const SNAPSHOT_HTML = {};
+
 function renderQuestionWithResponse(q, submission) {
+    if ((q.type || 'free-response') === 'document') {
+        return renderDocumentResponse(q, submission);
+    }
     const response = submission.responses.find(r => r.question_id === q.id);
     const feedback = submission.feedback.find(f => f.question_id === q.id);
     const level = q.id.split('.').length;
@@ -115,6 +123,70 @@ function renderQuestionWithResponse(q, submission) {
             ` : ''}
         </div>
     `;
+}
+
+function renderDocumentResponse(q, submission) {
+    const response = submission.responses.find(r => r.question_id === q.id);
+    const feedback = submission.feedback.find(f => f.question_id === q.id);
+    const level = q.id.split('.').length;
+    const indent = (level - 1) * 24;
+    const html = (response && response.response_data && response.response_data.html) || '';
+    let snapshotBlock;
+    if (html) {
+        SNAPSHOT_HTML[q.id] = html;
+        snapshotBlock = `
+            <details class="doc-snapshot mt-1">
+                <summary class="small text-muted">View the student's exported document
+                    (${Math.max(1, Math.round(html.length / 1024))} KB — script-free snapshot)</summary>
+                <button type="button" class="btn btn-sm btn-outline-secondary mt-2"
+                        onclick="loadSnapshot('${q.id}')">Render snapshot</button>
+                <div class="snapshot-frame-box mt-2" id="snapshot-${q.id}"></div>
+            </details>`;
+    } else {
+        snapshotBlock = `<div class="small text-muted mt-1">No exported document snapshot.</div>`;
+    }
+
+    return `
+        <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
+            <div>
+                <strong>${escapeHtml(q.id)}</strong>
+                <span class="badge text-bg-light border ms-1">Interactive document</span>
+                ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
+                <p class="mb-2">${escapeHtml(q.question)}</p>
+            </div>
+
+            <div class="response-box">
+                <label class="form-label text-muted small">Student's exported document:</label>
+                ${snapshotBlock}
+            </div>
+
+            ${feedback ? `
+                <div class="feedback-box">
+                    <label class="form-label text-muted small">Teacher Feedback:</label>
+                    <div class="feedback-content p-3 bg-light border rounded">
+                        ${escapeHtml(feedback.feedback_text)}
+                        <div class="text-muted small mt-2">
+                            ${feedback.teacher_id} | ${timestamp(feedback.created_at)}
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+function loadSnapshot(qid) {
+    const box = document.getElementById('snapshot-' + qid);
+    if (!box || !SNAPSHOT_HTML[qid]) return;
+    box.innerHTML = '';
+    const frame = document.createElement('iframe');
+    // Fully script-disabled: the snapshot was already scrubbed at write;
+    // the empty sandbox enforces it again at render (#78).
+    frame.setAttribute('sandbox', '');
+    frame.className = 'snapshot-frame';
+    frame.title = 'Exported document ' + qid;
+    frame.srcdoc = SNAPSHOT_HTML[qid];
+    box.appendChild(frame);
 }
 
 function escapeHtml(text) {
@@ -189,6 +261,15 @@ loadSubmission();
 .breadcrumb-item + .breadcrumb-item::before {
     content: ">";
     margin-right: 0.5rem;
+}
+
+/* Exported document snapshot (#78): inert, script-disabled render. */
+.snapshot-frame {
+    width: 100%;
+    height: 520px;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    background: #fff;
 }
 </style>
 {% endblock %}

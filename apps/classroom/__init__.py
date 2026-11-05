@@ -12,7 +12,7 @@ from campus.common import env
 from dotenv import load_dotenv
 
 from . import classroom_auth as cauth
-from . import enrollment, routes
+from . import documents, enrollment, routes
 
 # Load environment variables from .env file
 load_dotenv()
@@ -132,6 +132,7 @@ def create_app():
     routes.iframe.register_routes(app, login_manager)
     routes.classroom_auth.register_routes(app, login_manager)
     routes.classroom_sync.register_routes(app, login_manager)
+    routes.documents.register_routes(app, login_manager)
 
     # Register UI routes
     @app.get("/")
@@ -259,12 +260,33 @@ def create_app():
             requested if requested in {c["course_id"] for c in courses} else None
         )
 
+        # Document questions (#62/#78) render as sandboxed iframes on the
+        # dedicated embed origin — the doc HTML is never inlined into the
+        # page. Without EMBED_ORIGIN the answer sheet degrades to a
+        # notice (the frame is the only way to work the document).
+        questions = list(getattr(assignment, "questions", None) or [])
+        question_renderers = {
+            documents.question_id(q): documents.renderer_for(q)
+            for q in questions if documents.question_id(q)
+        }
+        embed_urls = {}
+        if documents.embed_origin():
+            for question in questions:
+                qid = documents.question_id(question)
+                if qid and documents.is_document(question):
+                    embed_urls[qid] = documents.embed_url_for(
+                        assignment.id, qid
+                    )
+
         return flask.render_template(
             "assignments/share.html",
             assignment=assignment,
             is_owner=is_owner,
             courses=courses,
             pinned_course=pinned_course,
+            question_renderers=question_renderers,
+            embed_urls=embed_urls,
+            embed_origin=documents.embed_origin(),
             profile_integrations_url=(
                 f"{cauth.profile_integrations_url()}/profile/integrations"
             ),

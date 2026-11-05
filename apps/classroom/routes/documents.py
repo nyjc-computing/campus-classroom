@@ -1,0 +1,127 @@
+"""campus.apps.classroom.routes.documents
+
+Document-question routes (#62/#78): export challenges for the answer
+sheet, and the embed origin's document serving.
+
+/export-challenge lives on the main app: the student's /a/ page calls it
+immediately before asking the embedded document to serialize itself, so
+every accepted snapshot carries a fresh server-minted nonce.
+
+/embed lives only on the docs deployment: EMBED_MODE=1 gates it, so the
+main origin never serves executable teacher HTML (#78). Embed requests
+carry no Campus session cookie (different origin), so auth is the
+short-lived HMAC token the share page minted into the iframe URL.
+"""
+
+import flask
+
+from .. import documents, enrollment
+
+
+def register_routes(app: flask.Flask, login_manager):
+    """Register document routes with the Flask app.
+
+    Args:
+        app: The Flask application
+        login_manager: The OAuthLoginManager for authentication
+    """
+
+    @app.post("/api/v1/assignments/<assignment_id>/export-challenge")
+    @login_manager.login_required
+    def api_export_challenge(assignment_id: str, **_):
+        """Mint the nonce an exported snapshot must carry (#78).
+
+        Enrollment-gated like every other attempt surface (PRD v1.3
+        rule 3): only students who can attempt the assignment can ask
+        for export authorization.
+
+        Request body:
+            - question_id: Question ID (required; must be a document
+              question)
+
+        Returns:
+            {nonce, expires_at} — expires_at is a unix timestamp
+        """
+        campus = flask.current_app.campus
+        data = flask.request.get_json() or {}
+        question_id = data.get("question_id")
+        if not question_id:
+            return flask.jsonify({"error": "question_id is required"}), 400
+
+        with campus.with_user_session() as client:
+            try:
+                assignment = client.api.assignments[assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Assignment not found"}), 404
+                raise
+            if not enrollment.is_enrolled(assignment):
+                return flask.jsonify({
+                    "error": "This assignment was not sent to any of your "
+                             "Google Classroom courses, so it cannot be "
+                             "attempted or submitted.",
+                    "code": "not_enrolled",
+                }), 403
+
+        question = _find_question(assignment, question_id)
+        if question is None or not documents.is_document(question):
+            return flask.jsonify(
+                {"error": "Question is not a document question"}), 400
+
+        nonce, expires_at = documents.mint_export_nonce(assignment_id, question_id)
+        return flask.jsonify({"nonce": nonce, "expires_at": expires_at})
+
+    @app.get("/embed/<assignment_id>/<question_id>")
+    def embed_document(assignment_id: str, question_id: str):
+        """Serve a document question's HTML from the embed origin (#78).
+
+        404s unless EMBED_MODE=1 — the main origin must never serve
+        executable teacher HTML. Reads the assignment through the
+        app-scoped session (embed visitors have no Campus session),
+        injects the export runtime, and sends a CSP that only the main
+        origin may frame.
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        token = flask.request.args.get("t", "")
+        if not documents.verify_embed_token(token, assignment_id, question_id):
+            flask.abort(403)
+
+        campus = flask.current_app.campus
+        try:
+            with campus.with_app_session() as client:
+                assignment = client.api.assignments[assignment_id].get()
+        except Exception as e:
+            if "not found" in str(e).lower():
+                flask.abort(404)
+            raise
+
+        question = _find_question(assignment, question_id)
+        if question is None or not documents.is_document(question):
+            flask.abort(404)
+
+        html = (getattr(question, "data", None) or {}).get("html", "")
+        parent = documents.parent_origin()
+        html = documents.inject_export_runtime(html, question_id, parent)
+
+        response = flask.make_response(html)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        response.headers["Cache-Control"] = "no-store"
+        frame_ancestors = (
+            f"frame-ancestors {parent}" if parent
+            else "frame-ancestors 'none'"
+        )
+        response.headers["Content-Security-Policy"] = (
+            f"{frame_ancestors}; base-uri 'none'; form-action 'none'"
+        )
+        return response
+
+
+def _find_question(assignment, question_id: str):
+    for question in getattr(assignment, "questions", None) or []:
+        if documents.question_id(question) == question_id:
+            return question
+    return None
+
+
+__all__ = ["register_routes"]

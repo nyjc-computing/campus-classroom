@@ -15,6 +15,10 @@ function generateQuestionId(level, index) {
     }
 }
 
+// Question types (#62/#78): campus validates type + data server-side;
+// these caps mirror its document schema so the builder rejects early.
+const MAX_DOCUMENT_CHARS = 2000000;
+
 // Recalculate all question IDs from the tree structure
 function recalculateAllIds() {
     document.querySelectorAll('#questions-container > .question-tree').forEach((tree, treeIndex) => {
@@ -69,8 +73,67 @@ function createQuestionCard(level = 1) {
                 <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
                 <textarea class="form-control question-text" rows="2" required placeholder="Enter your question here..."></textarea>
             </div>
+            <div class="mb-2 mt-2">
+                <label class="form-label small text-muted">Type</label>
+                <select class="form-select form-select-sm question-type" onchange="onQuestionTypeChange(this)">
+                    <option value="free-response">Free response</option>
+                    <option value="document">Interactive document</option>
+                </select>
+            </div>
+            <div class="question-doc-config d-none mb-0">
+                <label class="form-label small text-muted">Document (.html file or paste, up to 2 MB)</label>
+                <input type="file" class="form-control form-control-sm question-doc-file"
+                       accept=".html,.htm,text/html" onchange="onDocFilePicked(this)">
+                <textarea class="form-control form-control-sm question-doc-html mt-2" rows="3"
+                          placeholder="…or paste the complete single-file HTML document"
+                          oninput="updateDocStatus(this)"></textarea>
+                <div class="form-text question-doc-status">No document loaded.</div>
+            </div>
         </div>
     `;
+}
+
+// --- question types (#62/#78) ------------------------------------------------
+
+function onQuestionTypeChange(select) {
+    const card = select.closest('.question-card');
+    card.querySelector('.question-doc-config')
+        .classList.toggle('d-none', select.value !== 'document');
+}
+
+function setQuestionType(card, typeId) {
+    const select = card.querySelector('.question-type');
+    select.value = typeId || 'free-response';
+    onQuestionTypeChange(select);
+}
+
+function onDocFilePicked(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > MAX_DOCUMENT_CHARS) {
+        alert(`"${file.name}" is ${Math.round(file.size / 1024)} KB — `
+              + 'documents are limited to 2 MB.');
+        input.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        const area = input.closest('.question-card').querySelector('.question-doc-html');
+        area.value = String(reader.result || '');
+        updateDocStatus(area, file.name);
+    };
+    reader.readAsText(file);
+}
+
+function updateDocStatus(area, name) {
+    const status = area.closest('.question-card').querySelector('.question-doc-status');
+    const html = area.value;
+    if (!html.trim()) {
+        status.textContent = 'No document loaded.';
+        return;
+    }
+    const kb = Math.max(1, Math.round(html.length / 1024));
+    status.textContent = `${name ? name + ' · ' : ''}${kb} KB document loaded.`;
 }
 
 // Add top-level question
@@ -175,6 +238,13 @@ function populateBuilderFromFlat(flatQuestions) {
         setupDragAndDrop(card);
         card.querySelector('.question-prompt').value = q.prompt || '';
         card.querySelector('.question-text').value = q.question || '';
+        const typeId = q.type || 'free-response';
+        setQuestionType(card, typeId);
+        if (typeId === 'document') {
+            const area = card.querySelector('.question-doc-html');
+            area.value = (q.data && q.data.html) || '';
+            updateDocStatus(area);
+        }
 
         stack.push({ depth, card });
     });
@@ -297,12 +367,17 @@ function collectQuestions(container) {
         const badge = card.querySelector('.question-id-badge');
         const prompt = card.querySelector('.question-prompt').value.trim();
         const questionText = card.querySelector('.question-text').value.trim();
+        const typeId = card.querySelector('.question-type').value;
 
         const question = {
             id: badge.textContent,
             prompt: prompt,
             question: questionText
         };
+        if (typeId === 'document') {
+            question.type = typeId;
+            question.data = { html: card.querySelector('.question-doc-html').value };
+        }
 
         // Collect subquestions
         const subquestions = card.nextElementSibling;
@@ -325,11 +400,16 @@ function flattenQuestions(questions) {
     const flat = [];
 
     questions.forEach(q => {
-        flat.push({
+        const entry = {
             id: q.id,
             prompt: q.prompt,
             question: q.question
-        });
+        };
+        if (q.type) {
+            entry.type = q.type;
+            entry.data = q.data;
+        }
+        flat.push(entry);
 
         if (q.subquestions) {
             flat.push(...flattenQuestions(q.subquestions));
@@ -352,6 +432,16 @@ function collectValidatedQuestions() {
     const incomplete = questions.find(q => !q.question);
     if (incomplete) {
         alert(`Question ${incomplete.id} is missing its question text.`);
+        return null;
+    }
+
+    const badDoc = questions.find(q =>
+        q.type === 'document'
+        && (!q.data.html.trim() || q.data.html.length > MAX_DOCUMENT_CHARS));
+    if (badDoc) {
+        alert(badDoc.data.html.trim()
+            ? `Question ${badDoc.id}: the document exceeds the 2 MB limit.`
+            : `Question ${badDoc.id}: upload or paste the HTML document.`);
         return null;
     }
 
