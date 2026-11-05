@@ -12,6 +12,13 @@
         it starts serving the new version.
     </p>
 
+    {% if published %}
+    <div class="alert alert-success mb-3">
+        <i class="bi bi-check-circle-fill me-1"></i>
+        Published <code>{{ published }}</code>. Teachers can now pick it when
+        creating a document question.
+    </div>
+    {% endif %}
     <div id="publish-status" class="mb-3"></div>
 
     <div class="card mb-4">
@@ -75,9 +82,6 @@
     <p class="text-muted">No apps published yet.</p>
     {% endif %}
 
-    <p class="text-center text-muted small mt-4">
-        <a href="{{ url_for('auth.logout') }}" class="text-reset">Sign out</a>
-    </p>
 </div>
 {% endblock %}
 
@@ -138,12 +142,9 @@ async function publishApp() {
             box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Publishing failed.')}</div>`;
             return;
         }
-        box.innerHTML = `
-            <div class="alert alert-success mb-0">
-                <i class="bi bi-check-circle-fill me-1"></i>
-                ${data.replaced ? 'Replaced' : 'Published'} <code>${escapeText(data.slug)}</code>.
-                Teachers can now pick it when creating a document question${data.replaced ? ' — referencing assignments serve this version immediately' : ''}.
-            </div>`;
+        // Redirect-after-publish: the reload renders the fresh Published
+        // apps table plus the server-side success banner.
+        location.href = '/publish?published=' + encodeURIComponent(data.slug);
     } catch (error) {
         box.innerHTML = '<div class="alert alert-danger mb-0">Publishing failed. Please try again.</div>';
     } finally {
