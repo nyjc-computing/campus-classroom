@@ -24,21 +24,29 @@ separate services.
 
 ## Flow
 
-1. Teacher authors a `document` question (type picker → upload/paste
-   `.html`, ≤ 2 MB); campus validates `data.html` against the registry
-   schema (campus#533 entry, campus PR #1061).
-2. `/a/{id}` renders document questions as sandboxed iframes pointing
-   at tokened `/embed` URLs (doc HTML is never inlined into the page).
-3. At save/submit the page mints an **export challenge nonce**
+1. Publishers upload single-file HTML apps on campus-apphost
+   (`/publish`, Campus login — any signed-in user in dev, publish is
+   immediate, campus audit captures the action). Each app lands in
+   campus.api.files as `apps/<name>`: bytes in the `files` bucket,
+   metadata in the `files` collection with publisher attribution.
+2. Teachers create a document question by **picking a published app**
+   in the builder (picker ← `GET /api/v1/apps`); the question stores
+   the reference (`data: {slug}` — campus#1062), so re-publishing an
+   app updates referencing assignments in place. Legacy inline-`html`
+   questions keep working.
+3. `/a/{id}` renders document questions as sandboxed iframes pointing
+   at tokened `/embed` URLs (doc HTML is never inlined into the page);
+   `/embed` serves the file's **current** bytes.
+4. At save/submit the page mints an **export challenge nonce**
    (`POST /api/v1/assignments/{id}/export-challenge`, enrollment-gated),
    asks the frame to serialize via postMessage, and PATCHes
    `{question_id, question_type: "document", response_data: {html}}`.
-4. The submissions routes enforce snapshots before forwarding to campus:
+5. The submissions routes enforce snapshots before forwarding to campus:
    fresh nonce stamped as `meta[name=campus-export-nonce]`, size cap,
    and a scrub of `<script>`/`on*`/`javascript:` URLs. Snapshots are
    attestations, not verified evidence (a client can fabricate them, as
    it can `response_text` — accepted, out of scope).
-5. Review renders the snapshot in a fully script-disabled sandboxed
+6. Review renders the snapshot in a fully script-disabled sandboxed
    iframe (`sandbox=""`), on demand, per question.
 
 ## Railway ops (activating on dev)

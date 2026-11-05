@@ -16,8 +16,7 @@ function generateQuestionId(level, index) {
 }
 
 // Question types (#62/#78): campus validates type + data server-side;
-// these caps mirror its document schema so the builder rejects early.
-const MAX_DOCUMENT_CHARS = 2000000;
+// document questions reference a published app by slug (#81).
 
 // Recalculate all question IDs from the tree structure
 function recalculateAllIds() {
@@ -81,13 +80,13 @@ function createQuestionCard(level = 1) {
                 </select>
             </div>
             <div class="question-doc-config d-none mb-0">
-                <label class="form-label small text-muted">Document (.html file or paste, up to 2 MB)</label>
-                <input type="file" class="form-control form-control-sm question-doc-file"
-                       accept=".html,.htm,text/html" onchange="onDocFilePicked(this)">
-                <textarea class="form-control form-control-sm question-doc-html mt-2" rows="3"
-                          placeholder="…or paste the complete single-file HTML document"
-                          oninput="updateDocStatus(this)"></textarea>
-                <div class="form-text question-doc-status">No document loaded.</div>
+                <label class="form-label small text-muted">Published app</label>
+                <select class="form-select form-select-sm question-doc-app"
+                        onchange="updateDocStatus(this)">
+                    <option value="">Loading published apps…</option>
+                </select>
+                <div class="form-text question-doc-status">Apps are uploaded on
+                    campus-apphost — pick one to embed it.</div>
             </div>
         </div>
     `;
@@ -95,10 +94,67 @@ function createQuestionCard(level = 1) {
 
 // --- question types (#62/#78) ------------------------------------------------
 
+// Published apps (#81): document questions reference an app by slug; the
+// list comes from campus.api files (apps/ prefix) via /api/v1/apps.
+let APPS_PROMISE = null;
+
+function ensureAppsLoaded() {
+    if (!APPS_PROMISE) {
+        APPS_PROMISE = fetch('/api/v1/apps', {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        })
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to load published apps');
+                return response.json();
+            })
+            .then(apps => {
+                window.CAMPUS_APPS = apps;
+                refreshAllAppSelects();
+                return apps;
+            })
+            .catch(error => {
+                APPS_PROMISE = null;   // allow retry on the next document question
+                throw error;
+            });
+    }
+    return APPS_PROMISE;
+}
+
+function populateAppSelect(select) {
+    const current = select.value || select.dataset.appSlug || '';
+    const apps = window.CAMPUS_APPS || [];
+    select.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = apps.length
+        ? '— Choose a published app —'
+        : 'No apps published yet — upload one on campus-apphost.';
+    select.appendChild(placeholder);
+    apps.forEach(app => {
+        const option = document.createElement('option');
+        option.value = app.slug;
+        option.textContent = (app.name && app.name !== app.slug)
+            ? `${app.name} (${app.slug})`
+            : app.slug;
+        select.appendChild(option);
+    });
+    if (current) select.value = current;
+}
+
+function refreshAllAppSelects() {
+    document.querySelectorAll('.question-doc-app').forEach(populateAppSelect);
+}
+
 function onQuestionTypeChange(select) {
     const card = select.closest('.question-card');
-    card.querySelector('.question-doc-config')
-        .classList.toggle('d-none', select.value !== 'document');
+    const isDocument = select.value === 'document';
+    card.querySelector('.question-doc-config').classList.toggle('d-none', !isDocument);
+    if (isDocument) {
+        ensureAppsLoaded().catch(error => {
+            const status = card.querySelector('.question-doc-status');
+            if (status) status.textContent = error.message;
+        });
+    }
 }
 
 function setQuestionType(card, typeId) {
@@ -107,33 +163,11 @@ function setQuestionType(card, typeId) {
     onQuestionTypeChange(select);
 }
 
-function onDocFilePicked(input) {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    if (file.size > MAX_DOCUMENT_CHARS) {
-        alert(`"${file.name}" is ${Math.round(file.size / 1024)} KB — `
-              + 'documents are limited to 2 MB.');
-        input.value = '';
-        return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-        const area = input.closest('.question-card').querySelector('.question-doc-html');
-        area.value = String(reader.result || '');
-        updateDocStatus(area, file.name);
-    };
-    reader.readAsText(file);
-}
-
-function updateDocStatus(area, name) {
-    const status = area.closest('.question-card').querySelector('.question-doc-status');
-    const html = area.value;
-    if (!html.trim()) {
-        status.textContent = 'No document loaded.';
-        return;
-    }
-    const kb = Math.max(1, Math.round(html.length / 1024));
-    status.textContent = `${name ? name + ' · ' : ''}${kb} KB document loaded.`;
+function updateDocStatus(select) {
+    const status = select.closest('.question-card').querySelector('.question-doc-status');
+    if (!select.value) return;
+    const option = select.options[select.selectedIndex];
+    status.textContent = `Embeds ${option.textContent} — served live from the registry.`;
 }
 
 // Add top-level question
@@ -241,9 +275,11 @@ function populateBuilderFromFlat(flatQuestions) {
         const typeId = q.type || 'free-response';
         setQuestionType(card, typeId);
         if (typeId === 'document') {
-            const area = card.querySelector('.question-doc-html');
-            area.value = (q.data && q.data.html) || '';
-            updateDocStatus(area);
+            const appSelect = card.querySelector('.question-doc-app');
+            const slug = (q.data && q.data.slug) || '';
+            appSelect.dataset.appSlug = slug;   // kept until apps load
+            appSelect.value = slug;
+            ensureAppsLoaded().catch(() => {});
         }
 
         stack.push({ depth, card });
@@ -376,7 +412,7 @@ function collectQuestions(container) {
         };
         if (typeId === 'document') {
             question.type = typeId;
-            question.data = { html: card.querySelector('.question-doc-html').value };
+            question.data = { slug: card.querySelector('.question-doc-app').value };
         }
 
         // Collect subquestions
@@ -436,12 +472,10 @@ function collectValidatedQuestions() {
     }
 
     const badDoc = questions.find(q =>
-        q.type === 'document'
-        && (!q.data.html.trim() || q.data.html.length > MAX_DOCUMENT_CHARS));
+        q.type === 'document' && !q.data.slug);
     if (badDoc) {
-        alert(badDoc.data.html.trim()
-            ? `Question ${badDoc.id}: the document exceeds the 2 MB limit.`
-            : `Question ${badDoc.id}: upload or paste the HTML document.`);
+        alert(`Question ${badDoc.id}: choose a published app to embed. `
+              + 'Apps are uploaded on campus-apphost.');
         return null;
     }
 
