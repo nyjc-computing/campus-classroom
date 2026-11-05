@@ -17,11 +17,22 @@
     <div class="card mb-4">
         <div class="card-body">
             <div class="mb-3">
-                <label for="app-name" class="form-label">App name <span class="text-danger">*</span></label>
+                <label for="app-slug" class="form-label">Slug <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="app-slug"
+                       placeholder="e.g. quest-dom-explorer" required
+                       oninput="updateSlugPreview()">
+                <div class="form-text">The app's address:
+                    <code><span id="slug-preview">&lt;slug&gt;</span></code>.
+                    Letters, numbers, dots and dashes. Re-publishing an
+                    existing slug replaces that app in place — referencing
+                    assignments serve the new version.</div>
+            </div>
+            <div class="mb-3">
+                <label for="app-name" class="form-label">App name</label>
                 <input type="text" class="form-control" id="app-name"
-                       placeholder="e.g. quest-dom-explorer" required>
-                <div class="form-text">Letters, numbers, dots and dashes. Serves as
-                    <code>apps/&lt;name&gt;</code>.</div>
+                       placeholder="e.g. Quest DOM Explorer">
+                <div class="form-text">Optional display name for the assignment
+                    builder (defaults to the slug).</div>
             </div>
             <div class="mb-3">
                 <label for="app-file" class="form-label">HTML file <span class="text-danger">*</span></label>
@@ -75,6 +86,12 @@
 const MAX_APP_BYTES = 2000000;
 let appHtml = null;
 
+function updateSlugPreview() {
+    const raw = document.getElementById('app-slug').value.trim().toLowerCase();
+    const cleaned = raw.replace(/[^a-z0-9._-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+    document.getElementById('slug-preview').textContent = cleaned || '<slug>';
+}
+
 document.getElementById('app-file').addEventListener('change', function () {
     const file = this.files && this.files[0];
     appHtml = null;
@@ -97,11 +114,12 @@ document.getElementById('app-file').addEventListener('change', function () {
 });
 
 async function publishApp() {
+    const slug = document.getElementById('app-slug').value.trim();
     const name = document.getElementById('app-name').value.trim();
     const box = document.getElementById('publish-status');
     box.innerHTML = '';
-    if (!name || appHtml === null) {
-        box.innerHTML = '<div class="alert alert-warning mb-0">Pick a name and an HTML file first.</div>';
+    if (!slug || appHtml === null) {
+        box.innerHTML = '<div class="alert alert-warning mb-0">Pick a slug and an HTML file first.</div>';
         return;
     }
     const btn = document.getElementById('publish-btn');
@@ -113,7 +131,7 @@ async function publishApp() {
                 'Content-Type': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
             },
-            body: JSON.stringify({ name: name, html: appHtml }),
+            body: JSON.stringify({ slug: slug, name: name, html: appHtml }),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {

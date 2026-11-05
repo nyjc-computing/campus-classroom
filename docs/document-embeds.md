@@ -26,9 +26,11 @@ separate services.
 
 1. Publishers upload single-file HTML apps on campus-apphost
    (`/publish`, Campus login — any signed-in user in dev, publish is
-   immediate, campus audit captures the action). Each app lands in
-   campus.api.files as `apps/<name>`: bytes in the `files` bucket,
-   metadata in the `files` collection with publisher attribution.
+   immediate, campus audit captures the action). Each app lands in the
+   **campus.api hostedapps registry** (campus#1066): bytes
+   CONTENT-ADDRESSED in the `hostedapps` bucket under the content's
+   sha256, metadata in the `hostedapps` collection with publisher
+   attribution — the slug is the app's address, never a storage key.
 2. Teachers create a document question by **picking a published app**
    in the builder (picker ← `GET /api/v1/apps`); the question stores
    the reference (`data: {slug}` — campus#1062), so re-publishing an
@@ -36,7 +38,7 @@ separate services.
    questions keep working.
 3. `/a/{id}` renders document questions as sandboxed iframes pointing
    at tokened `/embed` URLs (doc HTML is never inlined into the page);
-   `/embed` serves the file's **current** bytes.
+   `/embed` serves the app's **current** bytes, hash-verified at serve.
 4. At save/submit the page mints an **export challenge nonce**
    (`POST /api/v1/assignments/{id}/export-challenge`, enrollment-gated),
    asks the frame to serialize via postMessage, and PATCHes
