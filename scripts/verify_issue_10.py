@@ -511,7 +511,7 @@ creates = StubClassroom.coursework_creates
 check("fallback CourseWork embeds a Link Material to /a/{id}",
       len(creates) == 1
       and creates[0][1]["materials"] == [{
-          "link": {"url": f"{ORIGIN}/a/a_ineligible",
+          "link": {"url": f"{ORIGIN}/a/a_ineligible?course=course_111",
                    "title": "Verify me"}}],
       json.dumps(creates))
 check("fallback stores no attachment ids",
@@ -533,7 +533,7 @@ check("capability-check errors degrade to the fallback too",
       json.dumps(results))
 check("capability errors add the Link Material",
       StubClassroom.coursework_creates[0][1]["materials"][0]["link"]["url"]
-      == f"{ORIGIN}/a/a_ineligible")
+      == f"{ORIGIN}/a/a_ineligible?course=course_222")
 
 # ---------------------------------------------------------------------------
 # 4. Eligible but attachment refused -> best-effort material patch
@@ -555,7 +555,8 @@ patches = StubClassroom.coursework_patches
 check("existing draft patched with the Link Material",
       len(patches) == 1
       and patches[0][0] == "course_111"
-      and patches[0][2]["materials"][0]["link"]["url"] == f"{ORIGIN}/a/a_degraded",
+      and patches[0][2]["materials"][0]["link"]["url"]
+      == f"{ORIGIN}/a/a_degraded?course=course_111",
       str(patches))
 
 # ... and if even the patch is refused, still no error and no attachment_id

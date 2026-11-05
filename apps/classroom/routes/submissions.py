@@ -15,7 +15,7 @@ rule).
 
 import flask
 
-from .. import enrollment
+from .. import documents, enrollment
 
 
 def _enrollment_denied():
@@ -25,6 +25,17 @@ def _enrollment_denied():
                  "Classroom courses, so it cannot be attempted or submitted.",
         "code": "not_enrolled",
     }), 403
+
+
+def _snapshot_denied(e: documents.DocumentResponseError):
+    """The 422 for a document response that failed snapshot enforcement
+    (#78): missing/stale export nonce, wrong shape, or oversize."""
+    return flask.jsonify({
+        "error": {
+            "code": "invalid_snapshot",
+            "message": str(e),
+        }
+    }), 422
 
 
 def _load_assignment(client, assignment_id):
@@ -132,6 +143,15 @@ def register_routes(app: flask.Flask, login_manager):
                 return flask.jsonify({"error": "Assignment not found"}), 404
             if not enrollment.is_enrolled(assignment):
                 return _enrollment_denied()
+
+            # Document questions (#78): snapshots must carry a fresh
+            # export nonce and arrive script-free; enforced here, before
+            # the Campus API's schema validation.
+            try:
+                documents.enforce_document_responses(
+                    assignment, data.get("responses"))
+            except documents.DocumentResponseError as e:
+                return _snapshot_denied(e)
 
             submission = client.api.submissions.new(
                 assignment_id=data["assignment_id"],
@@ -305,6 +325,13 @@ def register_routes(app: flask.Flask, login_manager):
             # (campus-api-python#78; was a latent ValueError here).
             updates = {}
             if "responses" in data:
+                # Document questions (#78): enforce snapshots before the
+                # full-replace PATCH reaches Campus.
+                try:
+                    documents.enforce_document_responses(
+                        assignment, data["responses"])
+                except documents.DocumentResponseError as e:
+                    return _snapshot_denied(e)
                 updates["responses"] = data["responses"]
             if "feedback" in data:
                 updates["feedback"] = data["feedback"]
