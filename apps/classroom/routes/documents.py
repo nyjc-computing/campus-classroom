@@ -86,7 +86,7 @@ def register_routes(app: flask.Flask, login_manager):
             flask.abort(404)
         campus = flask.current_app.campus
         with campus.with_user_session() as client:
-            apps = client.api.files.list(prefix=documents.APPS_SLUG_PREFIX)
+            apps = client.api.hostedapps.list()
         return flask.render_template("publish.html", apps=apps)
 
     @app.get("/api/v1/apps")
@@ -100,13 +100,13 @@ def register_routes(app: flask.Flask, login_manager):
         """
         campus = flask.current_app.campus
         with campus.with_user_session() as client:
-            apps = client.api.files.list(prefix=documents.APPS_SLUG_PREFIX)
+            apps = client.api.hostedapps.list()
         return flask.jsonify([
             {
-                "slug": app.get("slug"),
-                "name": app.get("name"),
-                "size": app.get("size"),
-                "updated_at": app.get("updated_at"),
+                "slug": app.slug,
+                "name": app.name,
+                "size": app.size,
+                "updated_at": app.updated_at,
             }
             for app in apps
         ])
@@ -114,23 +114,27 @@ def register_routes(app: flask.Flask, login_manager):
     @app.post("/api/v1/apps")
     @login_manager.login_required
     def api_publish_app(**_):
-        """Publish an app by upserting into campus.api.files (#81).
+        """Publish an app by upserting into the hostedapps registry
+        (campus.api.hostedapps, campus#1066).
 
-        Request body: {name: str, html: str} — the name derives the
-        slug (apps/<sanitised>); html is the complete single-file
+        Request body: {slug: str, name?: str, html: str} — the slug is
+        the app's address (sanitised); the optional name is the display
+        name shown in pickers; html is the complete single-file
         document. Upsert semantics: an existing slug is replaced in
-        place, which live-updates every referencing assignment. Only
-        on the apphost deployment (EMBED_MODE=1).
+        place (content re-pointed at the new hash), which live-updates
+        every referencing assignment. Only on the apphost deployment
+        (EMBED_MODE=1).
         """
         if not documents.embed_mode():
             flask.abort(404)
         data = flask.request.get_json() or {}
-        slug = documents.sanitize_app_slug(data.get("name") or "")
+        slug = documents.sanitize_app_slug(data.get("slug") or "")
+        name = (data.get("name") or "").strip() or None
         html = data.get("html") or ""
         if not slug:
             return flask.jsonify({
-                "error": "Provide an app name (letters, numbers, dots, "
-                         "dashes)."
+                "error": "Provide a slug (lowercase letters, numbers, "
+                         "dots, dashes)."
             }), 400
         if not html.strip() or "<" not in html:
             return flask.jsonify({
@@ -144,20 +148,19 @@ def register_routes(app: flask.Flask, login_manager):
         with campus.with_user_session() as client:
             replaced = True
             try:
-                client.api.files.get_meta(slug)
+                client.api.hostedapps.get_meta(slug)
             except Exception as e:
                 if "not found" not in str(e).lower():
                     raise
                 replaced = False
-            meta = client.api.files.put_by_slug(
-                slug, html, content_type="text/html"
+            meta = client.api.hostedapps.put_by_slug(
+                slug, html, content_type="text/html", name=name
             )
         return flask.jsonify({
-            "slug": slug,
-            "name": meta.get("name") or slug.removeprefix(
-                documents.APPS_SLUG_PREFIX),
+            "slug": meta.slug,
+            "name": meta.name or name or slug,
             "replaced": replaced,
-            "updated_at": meta.get("updated_at"),
+            "updated_at": meta.updated_at,
         }), (200 if replaced else 201)
 
     @app.get("/embed/<assignment_id>/<question_id>")
@@ -198,7 +201,7 @@ def register_routes(app: flask.Flask, login_manager):
         if not html and slug:
             try:
                 with campus.with_app_session() as client:
-                    html = client.api.files.get_content(slug).decode(
+                    html = client.api.hostedapps.get_content(slug).decode(
                         "utf-8", errors="replace"
                     )
             except Exception as e:

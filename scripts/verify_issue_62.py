@@ -70,11 +70,11 @@ DOC_QUESTION = SimpleNamespace(
 )
 SLUG_QUESTION = SimpleNamespace(
     id="q3", prompt="", question="Use the registry app, then submit.",
-    type="document", data={"slug": "apps/probe"},
+    type="document", data={"slug": "probe"},
 )
 GHOST_SLUG_QUESTION = SimpleNamespace(
     id="q4", prompt="", question="References a deleted app.",
-    type="document", data={"slug": "apps/ghost"},
+    type="document", data={"slug": "ghost"},
 )
 
 failures = []
@@ -269,54 +269,68 @@ class FakeSubmissionResource:
         self._current().submitted_at = None
 
 
-class FakeFiles:
-    """campus.api files stand-in (registry-backed apps, #81)."""
+class FakeHostedApps:
+    """campus.api hostedapps stand-in (content-addressed registry, #1066).
+
+    Returns campus.model.HostedApp models — the routes use attribute
+    access on them, mirroring the real SDK client.
+    """
 
     def __init__(self, store, calls):
         self._store = store
         self._calls = calls
 
-    def list(self, prefix=None):
-        self._calls.append(("files.list", prefix))
-        return [
-            {k: v for k, v in record.items() if k != "content"}
-            for slug, record in self._store.items()
-            if slug.startswith(prefix or "")
-        ]
+    def _model(self, slug):
+        from campus.model import HostedApp
+        stored = self._store[slug]
+        return HostedApp.from_storage(
+            {k: v for k, v in stored.items() if k != "content"})
+
+    def list(self):
+        self._calls.append(("hostedapps.list",))
+        return [self._model(slug) for slug in sorted(self._store)]
 
     def get_meta(self, slug):
-        self._calls.append(("files.get_meta", slug))
+        self._calls.append(("hostedapps.get_meta", slug))
         if slug not in self._store:
-            raise Exception("file not found")
-        return {k: v for k, v in self._store[slug].items() if k != "content"}
+            raise Exception("hosted app not found")
+        return self._model(slug)
 
     def get_content(self, slug):
-        self._calls.append(("files.get_content", slug))
+        self._calls.append(("hostedapps.get_content", slug))
         if slug not in self._store:
-            raise Exception("file not found")
+            raise Exception("hosted app not found")
         return self._store[slug]["content"].encode("utf-8")
 
-    def put_by_slug(self, slug, data, content_type=None):
-        self._calls.append(("files.put_by_slug", slug, content_type))
+    def put_by_slug(self, slug, data, content_type=None, name=None):
+        self._calls.append(
+            ("hostedapps.put_by_slug", slug, content_type, name))
+        previous = self._store.get(slug)
         record = {
+            "id": f"uid-hostedapp-{slug}",
             "slug": slug,
-            "name": None,
+            "name": name or (previous or {}).get("name"),
+            "content_hash": "b" * 64,
             "size": len(data),
-            "content_type": content_type or "application/octet-stream",
+            "content_type": content_type or "text/html",
+            "status": "published",
+            "uploaded_by_client_id": "uid-client-1",
+            "uploaded_by_user_id": "uid-user-student",
+            "created_at": "2026-11-05T00:00:00Z",
             "updated_at": "2026-11-05T00:00:00Z",
         }
         self._store[slug] = {
             **record,
             "content": data if isinstance(data, str) else data.decode("utf-8"),
         }
-        return record
+        return self._model(slug)
 
 
 class FakeAPI:
-    def __init__(self, assignments, submissions, files):
+    def __init__(self, assignments, submissions, hostedapps):
         self.assignments = assignments
         self.submissions = submissions
-        self.files = files
+        self.hostedapps = hostedapps
 
 
 class FakeCampus:
@@ -342,12 +356,18 @@ ASSIGNMENTS = {
 SUBMISSIONS = {
     "s1": FakeSubmission("s1", ASSIGNMENT_ID, STUDENT),
 }
-FILES_STORE = {
-    "apps/probe": {
-        "slug": "apps/probe",
+HOSTEDAPPS_STORE = {
+    "probe": {
+        "id": "uid-hostedapp-probe",
+        "slug": "probe",
         "name": "Probe App",
+        "content_hash": "a" * 64,
         "size": len(SLUG_APP_HTML),
         "content_type": "text/html",
+        "status": "published",
+        "uploaded_by_client_id": "uid-client-1",
+        "uploaded_by_user_id": "uid-user-teacher",
+        "created_at": "2026-11-05T00:00:00Z",
         "updated_at": "2026-11-05T00:00:00Z",
         "content": SLUG_APP_HTML,
     },
@@ -358,7 +378,7 @@ app = create_app()
 app.campus = FakeCampus(FakeAPI(
     FakeAssignments(ASSIGNMENTS, CALLS),
     FakeSubmissions(SUBMISSIONS, CALLS),
-    FakeFiles(FILES_STORE, CALLS),
+    FakeHostedApps(HOSTEDAPPS_STORE, CALLS),
 ))
 
 # Enrollment seams (the bridge is never exercised offline).
@@ -613,10 +633,10 @@ check("publisher page renders on apphost for a signed-in user",
 CALLS.clear()
 resp = student_client.get("/api/v1/apps")
 listing = resp.get_json()
-check("apps API lists the registry with the apps/ prefix",
+check("apps API lists the hostedapps registry",
       resp.status_code == 200
-      and listing and listing[0]["slug"] == "apps/probe"
-      and ("files.list", "apps/") in CALLS,
+      and listing and listing[0]["slug"] == "probe"
+      and ("hostedapps.list",) in CALLS,
       f"status={resp.status_code} {listing}")
 
 # campus-apphost containment (#81): EMBED_MODE deployments serve
@@ -661,7 +681,7 @@ body = resp.get_data(as_text=True)
 check("slug-referencing question serves the registry app's current bytes",
       resp.status_code == 200 and "registry-app-marker" in body
       and "CAMPUS_EMBED" in body
-      and ("files.get_content", "apps/probe") in CALLS,
+      and ("hostedapps.get_content", "probe") in CALLS,
       f"status={resp.status_code}")
 
 resp = student_client.get(
@@ -669,28 +689,32 @@ resp = student_client.get(
 check("a slug whose file is gone answers 404",
       resp.status_code == 404, f"status={resp.status_code}")
 
-# Publishing (#81): upsert into campus.api.files under apps/.
+# Publishing (#81): upsert into the hostedapps registry — the slug is
+# the address, the optional name is the picker display.
 CALLS.clear()
 resp = student_client.post("/api/v1/apps", json={
+    "slug": "probe-two",
     "name": "Probe Two",
     "html": "<html><body>second app</body></html>",
 })
-check("publishing a new app returns 201 with its derived slug",
+check("publishing a new app returns 201 with its slug and name",
       resp.status_code == 201
-      and resp.get_json()["slug"] == "apps/probe-two"
+      and resp.get_json()["slug"] == "probe-two"
+      and resp.get_json()["name"] == "Probe Two"
       and resp.get_json()["replaced"] is False,
       f"status={resp.status_code} {resp.get_data(as_text=True)[:200]}")
-check("the upload upserts the file with text/html",
-      ("files.put_by_slug", "apps/probe-two", "text/html") in CALLS
-      and "second app" in FILES_STORE["apps/probe-two"]["content"])
+check("the upload upserts with text/html and the display name",
+      ("hostedapps.put_by_slug", "probe-two", "text/html", "Probe Two") in CALLS
+      and "second app" in HOSTEDAPPS_STORE["probe-two"]["content"])
 
 resp = student_client.post("/api/v1/apps", json={
-    "name": "probe---two",
+    "slug": "probe-two",
     "html": "<html><body>second app v2</body></html>",
 })
 check("re-publishing the same slug replaces in place (200, replaced)",
       resp.status_code == 200 and resp.get_json()["replaced"] is True
-      and "second app v2" in FILES_STORE["apps/probe-two"]["content"],
+      and resp.get_json()["name"] == "Probe Two"
+      and "second app v2" in HOSTEDAPPS_STORE["probe-two"]["content"],
       f"status={resp.status_code}")
 
 resp = student_client.post("/api/v1/apps", json={
