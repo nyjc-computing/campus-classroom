@@ -39,6 +39,10 @@ account needed:
     broker, Not-connected state with the profile-page CTA, and clean error
     states when the broker is unreachable or rejects the release (no 500,
     no redirect loop).
+11. Re-entrancy (#92, campus-api-python#159): the release runs on a
+    throwaway Campus instance — a nested release (the enrollment bridge
+    inside a route's own with_user_session block) leaves the shared
+    instance's bearer untouched.
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_30.py
 """
@@ -61,6 +65,7 @@ os.environ["CLIENT_ID"] = "verify-issue-30-campus-client"
 os.environ["CLIENT_SECRET"] = "verify-issue-30-campus-secret"
 
 import campus.flask_campus.context as flask_context  # noqa: E402
+import campus_python  # noqa: E402
 import flask  # noqa: E402
 import requests  # noqa: E402
 import requests.adapters  # noqa: E402
@@ -336,8 +341,28 @@ def _fake_push_context(*_args):  # noqa: ARG001 (context seam patch; args unused
 flask_context.push_context = _fake_push_context
 
 app = create_app()
+
+# Two fakes, because #92 gives the seam two distinct consumers:
+# - fake_campus is flask.current_app.campus — the shared instance the
+#   routes open their own user sessions on;
+# - broker_campus is what _broker_release constructs (it builds its own
+#   throwaway Campus per release, never the shared one).
+# The Campus-constructor patch records each construction so the
+# re-entrancy check can prove the release side stays off the shared
+# instance.
 fake_campus = FakeCampus()
-app.campus = fake_campus  # the seam reads flask.current_app.campus
+broker_campus = FakeCampus()
+campus_constructions: list = []
+
+app.campus = fake_campus  # routes' own user sessions read flask.current_app.campus
+
+
+def _fake_campus_constructor(timeout=None):
+    campus_constructions.append(timeout)
+    return broker_campus
+
+
+campus_python.Campus = _fake_campus_constructor
 
 log_records: list = []
 
@@ -368,17 +393,35 @@ def _probe_nogate(**_):
         return {"data": classroom.courses_list()}
 
 
+@app.get("/api/_probe_nested_release")
+def _probe_nested_release(**_):
+    """#92's exact shape: a broker release nested inside an open user
+    session on the shared instance (the enrollment bridge's position in
+    the submissions/documents routes). Reports the shared instance's
+    bearer before and after the nested release."""
+    bearers: list = []
+    with fake_campus.with_user_session():
+        bearers.append(fake_campus.auth.session_bearer)
+        creds = cauth.fetch_broker_credential([])
+        bearers.append(fake_campus.auth.session_bearer)
+    return {"data": {
+        "released": bool(creds.get("access_token")),
+        "shared_bearers": bearers,
+    }}
+
+
 def seed_user(client):
     with client.session_transaction() as sess:
         sess["verify_user"] = {"id": CAMPUS_EMAIL, "email": CAMPUS_EMAIL}
 
 
 def reset_fake(token: str = "cat-1", *, expired: bool = False):
-    """Fresh stored campus credential on the fake campus.auth object."""
-    fake_campus.auth.stored = FakeCampusAuth._mint(token, expired=expired)
-    fake_campus.auth.token_calls.clear()
-    fake_campus.auth.cred_updates.clear()
-    fake_campus.auth.has_login = True
+    """Fresh stored campus credential on both fakes (shared + release)."""
+    for fake in (fake_campus, broker_campus):
+        fake.auth.stored = FakeCampusAuth._mint(token, expired=expired)
+        fake.auth.token_calls.clear()
+        fake.auth.cred_updates.clear()
+        fake.auth.has_login = True
 
 
 client = app.test_client()
@@ -411,11 +454,11 @@ check("refreshed campus token is what the broker sees",
       resp.status_code == 200 and FakeBroker.bearers == ["cat-2"],
       str(FakeBroker.bearers))
 check("refresh used the token endpoint with the stored refresh token",
-      fake_campus.auth.token_calls == [("refresh_token", "crt-1")],
-      str(fake_campus.auth.token_calls))
+      broker_campus.auth.token_calls == [("refresh_token", "crt-1")],
+      str(broker_campus.auth.token_calls))
 check("refreshed credential written back",
-      len(fake_campus.auth.cred_updates) == 1
-      and fake_campus.auth.cred_updates[0].access_token == "cat-2")
+      len(broker_campus.auth.cred_updates) == 1
+      and broker_campus.auth.cred_updates[0].access_token == "cat-2")
 
 # ---------------------------------------------------------------------------
 # 3. Near-expiry release -> proactive broker re-release before Classroom
@@ -615,6 +658,30 @@ html = resp.get_data(as_text=True)
 check("page renders Not-connected with the profile CTA (no 500)",
       resp.status_code == 200 and "Not connected" in html
       and "https://profile.example/profile/integrations" in html)
+
+# ---------------------------------------------------------------------------
+# 11. Re-entrancy (#92, campus-api-python#159): a release nested inside
+#     another user session — the enrollment bridge's exact position in the
+#     submissions/documents routes — must run on a throwaway instance and
+#     leave the shared instance's bearer alone.
+# ---------------------------------------------------------------------------
+FakeBroker.reset("ok")
+reset_fake()
+campus_constructions.clear()
+resp = client.get("/api/_probe_nested_release")
+body = resp.get_json()["data"]
+check("nested release succeeds while an outer user session is open",
+      resp.status_code == 200 and body["released"] is True,
+      resp.get_data(as_text=True)[:200])
+check("nested release ran on a fresh instance, not the shared one",
+      campus_constructions == [60] and broker_campus is not fake_campus,
+      f"constructions={campus_constructions}")
+check("shared instance kept its bearer through the nested release",
+      body["shared_bearers"][0] is not None
+      and body["shared_bearers"][0] == body["shared_bearers"][1],
+      str(body["shared_bearers"]))
+check("release rode the outer session's campus bearer",
+      FakeBroker.bearers == [body["shared_bearers"][0]], str(FakeBroker.bearers))
 
 server.shutdown()
 print()

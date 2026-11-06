@@ -41,6 +41,7 @@ os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-12-secret"
 
 import campus.flask_campus.context as flask_context  # noqa: E402
+import campus_python  # noqa: E402
 import flask  # noqa: E402
 from campus_python import errors as campus_errors  # noqa: E402
 
@@ -92,6 +93,11 @@ class FakeBroker:
 def _fake_classroom_request(self, method, path, *, params=None, json=None):  # noqa: ARG001
     CLASSROOM_CALLS.append((method, path, dict(params or {})))
     self._access_token()  # mirror the real flow: release before the call
+    if path == "v1/courses":
+        # The rule-4 listing calls user_courses() outside its own session
+        # (route-side since #14); one scripted course is enough for the
+        # guard checks — the listing intersects it with ASSIGNMENTS.
+        return {"courses": [{"id": "c1", "name": "CampusClass"}]}
     if not path.endswith("/addOnContext"):
         raise AssertionError(f"unexpected Classroom path {path!r}")
     # Identity comes from the released credential (fetch_broker_credential
@@ -180,6 +186,9 @@ flask_context.push_context = _fake_push_context
 
 app = create_app()
 app.campus = FAKE_CAMPUS
+# _broker_release builds its own throwaway Campus per release (#92) —
+# the constructor is the release-side seam now; hand it FAKE_CAMPUS too.
+campus_python.Campus = lambda timeout=None: FAKE_CAMPUS  # noqa: ARG005
 
 failures = []
 
