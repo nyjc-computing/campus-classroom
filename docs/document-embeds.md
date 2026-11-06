@@ -43,6 +43,10 @@ embedded in an assignment that has been sent to Classroom — re-deploying
 the same slug updates every assigned copy in place. There is no public
 serving URL; the app is reachable only via the authenticated Campus API
 and the token-gated `/embed` frames.
+
+Send-to-Classroom creates the coursework as a **draft**: students see
+the assignment only after the teacher opens it in the Google Classroom
+UI and clicks Assign (verified live, #81 E2E).
 3. `/a/{id}` renders document questions as sandboxed iframes pointing
    at tokened `/embed` URLs (doc HTML is never inlined into the page);
    `/embed` serves the app's **current** bytes, hash-verified at serve.

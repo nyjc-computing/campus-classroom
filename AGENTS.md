@@ -107,6 +107,38 @@ ENV="development"  # or "staging" or "production"
 
 ---
 
+## Live E2E Testing (#81)
+
+The app is a headless API + Google Classroom add-on: the dashboard
+placeholder is expected, and assignments flow through the API and
+Classroom iframes — not through dashboard pages. A full publish →
+assign → student → submit → review E2E has been run green with the
+test accounts (2026-11-06).
+
+Prerequisites and gotchas:
+
+- **Test accounts only** (never personal credentials): staff/student
+  credentials live in `.env` (`CAMPUS_TEST_STAFF_*`,
+  `CAMPUS_TEST_STUDENT_*`). `campus-test-admin@nyjc.edu.sg` holds the
+  `.admin` circles and is the designated grantor; its password is not
+  stored — grants run through its own device-flow login.
+- **Circle prerequisites** (missing memberships 403 as #854
+  client/user denials on campus.api): staff needs `assignments.admin`
+  + `submissions.admin`, student needs `submissions.admin`. Grant
+  recipe and rationale: `docs/circles-access-control.md` in the campus
+  repo ("Classroom live-testing grants").
+- **Send-to-Classroom creates a DRAFT** coursework; the teacher must
+  open it in the Google Classroom UI and click Assign before students
+  see it (see the lifecycle vocabulary in
+  [docs/document-embeds.md](docs/document-embeds.md)).
+- Page-context `fetch` mutations need the
+  `X-Requested-With: XMLHttpRequest` CSRF header, and linked
+  assignments are PATCH-locked (409) until unlinked.
+- Embed/app-hosting runbook:
+  [docs/document-embeds.md](docs/document-embeds.md).
+
+---
+
 ## Reference Implementation: campus-admin
 
 Located in `d:\nyjc-computing\campus-admin`, this is the canonical example for building Campus apps.
