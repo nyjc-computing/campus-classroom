@@ -38,6 +38,7 @@ os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-14-secret"
 
 import campus.flask_campus.context as flask_context  # noqa: E402
+import campus_python  # noqa: E402
 import flask  # noqa: E402
 from campus_python import errors as campus_errors  # noqa: E402
 
@@ -382,6 +383,9 @@ flask_context.push_context = _fake_push_context
 
 app = create_app()
 app.campus = FAKE_CAMPUS
+# _broker_release builds its own throwaway Campus per release (#92) —
+# the constructor is the release-side seam now; hand it FAKE_CAMPUS too.
+campus_python.Campus = lambda timeout=None: FAKE_CAMPUS  # noqa: ARG005
 
 failures = []
 
