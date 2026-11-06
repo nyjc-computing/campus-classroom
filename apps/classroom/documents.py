@@ -262,9 +262,8 @@ def inject_export_runtime(html: str, question_id: str, parent: str | None) -> st
         "<script>window.CAMPUS_EMBED=" + config + ";</script>\n"
         "<script>\n" + export_runtime_js() + "\n</script>"
     )
-    close = None
-    for close in re.finditer(r"</body\s*>", html, re.IGNORECASE):
-        pass
+    matches = list(re.finditer(r"</body\s*>", html, re.IGNORECASE))
+    close = matches[-1] if matches else None
     if close is not None:
         return html[:close.start()] + bootstrap + html[close.start():]
     return html + bootstrap
