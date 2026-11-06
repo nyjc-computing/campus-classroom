@@ -100,7 +100,7 @@ def create_app():
         return None
 
     # Add jinja timestamp filter
-    def timestamp(dt, format="%%Y-%%m-%%d %%H:%%M"):
+    def timestamp(dt, format="%Y-%m-%d %H:%M"):
         if dt is None:
             return "N/A"
         if isinstance(dt, str):

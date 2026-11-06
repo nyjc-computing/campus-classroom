@@ -68,10 +68,11 @@
             </thead>
             <tbody>
             {% for app in apps %}
+            {% set size_kb = ((app.size / 1024) | round(0, 'ceil') | int) %}
             <tr>
                 <td><code>{{ app.slug }}</code></td>
                 <td>{{ app.name or app.slug }}</td>
-                <td>{{ app.size }} B</td>
+                <td>{{ size_kb }} KB</td>
                 <td>{{ app.updated_at | timestamp }}</td>
             </tr>
             {% endfor %}
