@@ -120,7 +120,7 @@ def register_routes(app: flask.Flask, login_manager):
     @app.post("/api/v1/apps")
     @login_manager.login_required
     def api_publish_app(**_):
-        """Publish an app by upserting into the hostedapps registry
+        """Deploy an app by upserting into the hostedapps registry
         (campus.api.hostedapps, campus#1066).
 
         Request body: {slug: str, name?: str, html: str} — the slug is

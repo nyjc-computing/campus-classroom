@@ -1,22 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}Publish an app{% endblock %}
+{% block title %}Deploy an app{% endblock %}
 
 {% block content %}
 <div class="container-md mt-4 mt-md-5">
-    <h2 class="mb-1"><i class="bi bi-cloud-upload me-2"></i>Publish an app</h2>
+    <h2 class="mb-1"><i class="bi bi-cloud-upload me-2"></i>Deploy an app</h2>
     <p class="text-muted">
-        Upload a single-file HTML app (≤ 2 MB). Published apps appear in the
-        document-question picker when teachers create assignments. Re-publishing
-        an existing app's name replaces it in place — every assignment referencing
+        Upload a single-file HTML app (≤ 2 MB). Deployed apps appear in the
+        document-question picker when teachers create assignments. Re-deploying
+        an existing slug replaces it in place — every assignment referencing
         it starts serving the new version.
     </p>
 
-    {% if published %}
+    {% if deployed %}
     <div class="alert alert-success mb-3">
         <i class="bi bi-check-circle-fill me-1"></i>
-        Published <code>{{ published }}</code>. Teachers can now pick it when
-        creating a document question.
+        Deployed <code>{{ deployed }}</code>. Teachers can now embed it in an
+        assignment; once the assignment is sent to Classroom, the app is
+        assigned.
     </div>
     {% endif %}
     <div id="publish-status" class="mb-3"></div>
@@ -30,7 +31,7 @@
                        oninput="updateSlugPreview()">
                 <div class="form-text">The app's address:
                     <code><span id="slug-preview">&lt;slug&gt;</span></code>.
-                    Letters, numbers, dots and dashes. Re-publishing an
+                    Letters, numbers, dots and dashes. Re-deploying an
                     existing slug replaces that app in place — referencing
                     assignments serve the new version.</div>
             </div>
@@ -49,12 +50,12 @@
             </div>
             <button type="button" id="publish-btn" class="btn btn-primary"
                     onclick="publishApp()">
-                <i class="bi bi-upload me-1"></i>Publish
+                <i class="bi bi-upload me-1"></i>Deploy
             </button>
         </div>
     </div>
 
-    <h5 class="mb-3">Published apps ({{ apps | length }})</h5>
+    <h5 class="mb-3">Deployed apps ({{ apps | length }})</h5>
     {% if apps %}
     <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -80,7 +81,7 @@
         </table>
     </div>
     {% else %}
-    <p class="text-muted">No apps published yet.</p>
+    <p class="text-muted">No apps deployed yet.</p>
     {% endif %}
 
 </div>
@@ -140,14 +141,14 @@ async function publishApp() {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-            box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Publishing failed.')}</div>`;
+            box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Deployment failed.')}</div>`;
             return;
         }
-        // Redirect-after-publish: the reload renders the fresh Published
+        // Redirect-after-deploy: the reload renders the fresh Deployed
         // apps table plus the server-side success banner.
-        location.href = '/publish?published=' + encodeURIComponent(data.slug);
+        location.href = '/publish?deployed=' + encodeURIComponent(data.slug);
     } catch (error) {
-        box.innerHTML = '<div class="alert alert-danger mb-0">Publishing failed. Please try again.</div>';
+        box.innerHTML = '<div class="alert alert-danger mb-0">Deployment failed. Please try again.</div>';
     } finally {
         btn.disabled = false;
     }
