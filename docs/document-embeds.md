@@ -24,18 +24,25 @@ separate services.
 
 ## Flow
 
-1. Publishers upload single-file HTML apps on campus-apphost
-   (`/publish`, Campus login — any signed-in user in dev, publish is
+1. Publishers **deploy** single-file HTML apps on campus-apphost
+   (`/publish`, Campus login — any signed-in user in dev, deploy is
    immediate, campus audit captures the action). Each app lands in the
    **campus.api hostedapps registry** (campus#1066): bytes
    CONTENT-ADDRESSED in the `hostedapps` bucket under the content's
    sha256, metadata in the `hostedapps` collection with publisher
    attribution — the slug is the app's address, never a storage key.
-2. Teachers create a document question by **picking a published app**
+2. Teachers create a document question by **picking a deployed app**
    in the builder (picker ← `GET /api/v1/apps`); the question stores
-   the reference (`data: {slug}` — campus#1062), so re-publishing an
+   the reference (`data: {slug}` — campus#1062), so re-deploying an
    app updates referencing assignments in place. Legacy inline-`html`
    questions keep working.
+
+Lifecycle vocabulary: an app is **deployed** while it lives in the
+registry (available for embedding); it becomes **assigned** once it is
+embedded in an assignment that has been sent to Classroom — re-deploying
+the same slug updates every assigned copy in place. There is no public
+serving URL; the app is reachable only via the authenticated Campus API
+and the token-gated `/embed` frames.
 3. `/a/{id}` renders document questions as sandboxed iframes pointing
    at tokened `/embed` URLs (doc HTML is never inlined into the page);
    `/embed` serves the app's **current** bytes, hash-verified at serve.

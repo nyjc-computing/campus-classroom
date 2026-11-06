@@ -35,8 +35,8 @@ EXPORT_NONCE_TTL_SECONDS = 10 * 60      # challenge → save/submit window
 DOCUMENT_TYPE_ID = "document"
 NONCE_META_NAME = "campus-export-nonce"
 
-# Published apps live in the campus.api hostedapps registry (#81,
-# campus#1066): publishers upload via campus-apphost, classroom
+# Deployed apps live in the campus.api hostedapps registry (#81,
+# campus#1066): publishers deploy via campus-apphost, classroom
 # questions reference `data: {slug}`, and the embed route serves the
 # app's current bytes — replacing a slug's content updates referencing
 # assignments in place. Bytes are content-addressed (sha256 keys) and

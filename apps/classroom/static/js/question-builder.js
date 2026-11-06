@@ -16,7 +16,7 @@ function generateQuestionId(level, index) {
 }
 
 // Question types (#62/#78): campus validates type + data server-side;
-// document questions reference a published app by slug (#81).
+// document questions reference a deployed app by slug (#81).
 
 // Recalculate all question IDs from the tree structure
 function recalculateAllIds() {
@@ -80,10 +80,10 @@ function createQuestionCard(level = 1) {
                 </select>
             </div>
             <div class="question-doc-config d-none mb-0">
-                <label class="form-label small text-muted">Published app</label>
+                <label class="form-label small text-muted">Deployed app</label>
                 <select class="form-select form-select-sm question-doc-app"
                         onchange="updateDocStatus(this)">
-                    <option value="">Loading published apps…</option>
+                    <option value="">Loading deployed apps…</option>
                 </select>
                 <div class="form-text question-doc-status">Apps are uploaded on
                     campus-apphost — pick one to embed it.</div>
@@ -94,7 +94,7 @@ function createQuestionCard(level = 1) {
 
 // --- question types (#62/#78) ------------------------------------------------
 
-// Published apps (#81): document questions reference an app by slug; the
+// Deployed apps (#81): document questions reference an app by slug; the
 // list comes from campus.api files (apps/ prefix) via /api/v1/apps.
 let APPS_PROMISE = null;
 
@@ -104,7 +104,7 @@ function ensureAppsLoaded() {
             headers: {'X-Requested-With': 'XMLHttpRequest'},
         })
             .then(response => {
-                if (!response.ok) throw new Error('Failed to load published apps');
+                if (!response.ok) throw new Error('Failed to load deployed apps');
                 return response.json();
             })
             .then(apps => {
@@ -127,7 +127,7 @@ function populateAppSelect(select) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
     placeholder.textContent = apps.length
-        ? '— Choose a published app —'
+        ? '— Choose a deployed app —'
         : 'No apps published yet — upload one on campus-apphost.';
     select.appendChild(placeholder);
     apps.forEach(app => {
@@ -474,7 +474,7 @@ function collectValidatedQuestions() {
     const badDoc = questions.find(q =>
         q.type === 'document' && !q.data.slug);
     if (badDoc) {
-        alert(`Question ${badDoc.id}: choose a published app to embed. `
+        alert(`Question ${badDoc.id}: choose a deployed app to embed. `
               + 'Apps are uploaded on campus-apphost.');
         return null;
     }
