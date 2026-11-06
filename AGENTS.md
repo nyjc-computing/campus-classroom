@@ -13,6 +13,12 @@ This document provides essential context for agents working on the `campus-class
 
 ## Campus Ecosystem Architecture
 
+> **Dependency tree / relock order:** [docs/dependency-tree.md](docs/dependency-tree.md)
+> records who pins whom across the suite and the leaf-first order to
+> bump/release/lock packages. Campus deps are exact wheel-URL pins and
+> released wheels freeze their pins — a new version anywhere requires
+> re-releasing every package on the path above it before consumers can lock.
+
 ### 1. Campus Framework (`d:\nyjc-computing\campus`)
 
 The Campus framework is a **modular monolith** built on Flask with these key modules:
