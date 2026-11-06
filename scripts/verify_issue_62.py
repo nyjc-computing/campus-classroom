@@ -628,7 +628,7 @@ os.environ["EMBED_PARENT_ORIGIN"] = "http://localhost:5000"
 # publisher UI and the apps API alongside /embed.
 resp = student_client.get("/publish")
 check("publisher page renders on apphost for a signed-in user",
-      resp.status_code == 200 and "Publish an app" in resp.get_data(as_text=True),
+      resp.status_code == 200 and "Deploy an app" in resp.get_data(as_text=True),
       f"status={resp.status_code}")
 CALLS.clear()
 resp = student_client.get("/api/v1/apps")
