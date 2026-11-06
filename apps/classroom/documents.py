@@ -248,14 +248,24 @@ def export_runtime_js() -> str:
 def inject_export_runtime(html: str, question_id: str, parent: str | None) -> str:
     """Append the export runtime (and its config) to a document. The
     runtime self-identifies via window.CAMPUS_EMBED and only accepts
-    export requests from the main-app origin."""
+    export requests from the main-app origin.
+
+    The bootstrap lands before the LAST ``</body>``: app content may
+    contain literal ``</body>`` strings earlier in the document (an
+    HTML-teaching app's markup examples, an escaped source view), and
+    injecting at the first occurrence puts the runtime inside that
+    content — a template literal or textarea swallows it as text and
+    the export handshake never runs (#81 live-E2E find).
+    """
     config = json.dumps({"qid": question_id, "parentOrigin": parent})
     bootstrap = (
         "<script>window.CAMPUS_EMBED=" + config + ";</script>\n"
         "<script>\n" + export_runtime_js() + "\n</script>"
     )
-    close = re.search(r"</body\s*>", html, re.IGNORECASE)
-    if close:
+    close = None
+    for close in re.finditer(r"</body\s*>", html, re.IGNORECASE):
+        pass
+    if close is not None:
         return html[:close.start()] + bootstrap + html[close.start():]
     return html + bootstrap
 

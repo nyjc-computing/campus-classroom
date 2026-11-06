@@ -120,6 +120,23 @@ check("snapshot nonce extraction",
 check("snapshot nonce extraction absent when unstamped",
       documents._snapshot_nonce(DOC_HTML) is None)
 
+# Runtime injection: the bootstrap must land at the DOCUMENT-level
+# </body>. App content may carry literal "</body>" strings (an
+# HTML-teaching app's markup examples, an escaped source view);
+# injecting at the first occurrence buries the runtime inside that
+# content — a template literal or textarea swallows it as text and the
+# export handshake never runs (live-E2E find, #81).
+app_with_body_string = (
+    '<!DOCTYPE html><html><head><title>App</title></head><body>'
+    '<script>const sample = "</body>";  // content mentions the tag'
+    '</script><main id="content"></main></body></html>'
+)
+injected = documents.inject_export_runtime(app_with_body_string, "q1", DOCS_ORIGIN)
+check("runtime injects outside content that mentions </body>",
+      injected.find("window.CAMPUS_EMBED") > injected.find("</script>"))
+check("runtime lands at the document-level close",
+      injected.rfind("</body>") > injected.find("window.CAMPUS_EMBED"))
+
 clean = documents.sanitize_snapshot(stamped)
 check("sanitiser strips scripts",
       "<script" not in clean and "alert(1)" not in clean)
