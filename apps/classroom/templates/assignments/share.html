@@ -548,12 +548,19 @@ async function apiError(response, fallback) {
     // Auth-bridge failures arrive as {error: {code, message}}; the
     // enrollment guard as {error: "…", code: "not_enrolled"}. Surface
     // the message, plus a connect CTA when it is remediable in-browser.
+    // A dead Campus grant (#98) is not: the top-level redirect through
+    // /login IS the remedy.
     const data = await response.json().catch(() => ({}));
     const code = (data.error && data.error.code) || data.code || '';
+    if (handleSessionExpiry(response, data)) {
+        return Object.assign(
+            new Error('Your Campus sign-in expired — redirecting to sign in…'),
+            {handled: true},
+        );
+    }
     const message = formatApiError(data, fallback);
     const connectable = [
         'classroom_not_connected', 'classroom_missing_scopes',
-        'campus_session_expired',
     ];
     if (connectable.includes(code)) {
         return Object.assign(new Error(message), {

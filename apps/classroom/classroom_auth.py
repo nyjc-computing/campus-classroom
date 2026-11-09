@@ -263,6 +263,9 @@ def _broker_error(err: CampusClientError) -> ClassroomAuthError:
 
         404 no connected credential   -> NotConnectedError (profile pointer)
         401 bad/expired campus bearer -> CampusSessionExpiredError (re-login)
+        400 oauth invalid_grant       -> CampusSessionExpiredError: the
+            login session or the stored campus grant is gone/expired
+            (#98) — re-login, not a configuration bug
         403 + details.missing_scopes  -> MissingClassroomScopesError
         400 AUTH_INVALID_SCOPE / other 403 -> BrokerConfigError, logged
             loudly: an allowlist/vault-cap/bridge-flag mismatch is a
@@ -271,6 +274,13 @@ def _broker_error(err: CampusClientError) -> ClassroomAuthError:
     if isinstance(err, CampusNotFoundError):
         return NotConnectedError()
     if isinstance(err, CampusAuthenticationError):
+        return CampusSessionExpiredError()
+    if err.oauth_error == "invalid_grant":
+        # The login-session token route refused to mint the campus
+        # bearer the broker release runs under: the login session or
+        # the stored campus grant is gone/expired (#98). Not a
+        # configuration problem — the same remedy as a 401, sign in
+        # to Campus again.
         return CampusSessionExpiredError()
     missing = (err.details or {}).get("missing_scopes")
     if missing:

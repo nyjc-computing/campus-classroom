@@ -15,7 +15,7 @@ short-lived HMAC token the share page minted into the iframe URL.
 
 import flask
 
-from .. import documents, enrollment
+from .. import campus_session, documents, enrollment
 
 
 def register_routes(app: flask.Flask, login_manager):
@@ -42,13 +42,12 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             {nonce, expires_at} — expires_at is a unix timestamp
         """
-        campus = flask.current_app.campus
         data = flask.request.get_json() or {}
         question_id = data.get("question_id")
         if not question_id:
             return flask.jsonify({"error": "question_id is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 assignment = client.api.assignments[assignment_id].get()
             except Exception as e:
@@ -84,8 +83,7 @@ def register_routes(app: flask.Flask, login_manager):
         """
         if not documents.embed_mode():
             flask.abort(404)
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             apps = client.api.hostedapps.list()
         # Redirect-after-deploy (#81): publishApp() lands back here with
         # ?deployed=<slug>, so the table renders fresh WITH the banner.
@@ -104,8 +102,7 @@ def register_routes(app: flask.Flask, login_manager):
         this for the picker; the apphost publish page server-renders
         its own list.
         """
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             apps = client.api.hostedapps.list()
         return flask.jsonify([
             {
@@ -150,8 +147,7 @@ def register_routes(app: flask.Flask, login_manager):
             return flask.jsonify(
                 {"error": "The app exceeds the 2 MB limit."}), 400
 
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             replaced = True
             try:
                 client.api.hostedapps.get_meta(slug)

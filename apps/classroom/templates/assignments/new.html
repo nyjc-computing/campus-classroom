@@ -75,6 +75,7 @@ async function submitAssignment(e) {
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, err)) return;
             throw new Error(formatApiError(err, 'Failed to create assignment'));
         }
 

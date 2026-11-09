@@ -13,6 +13,7 @@ missing_scopes + authorize_url for the incremental re-consent redirect).
 import flask
 from campus import flask_campus
 
+from .. import campus_session
 from .. import classroom_auth as cauth
 from .. import classroom_sync as csync
 
@@ -59,7 +60,6 @@ def register_routes(app: flask.Flask, login_manager):
         editing once any link is stored (existing lock semantics).
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json(silent=True) or {}
         course_ids = data.get("course_ids")
         if (not isinstance(course_ids, list)
@@ -71,7 +71,7 @@ def register_routes(app: flask.Flask, login_manager):
             }), 400
 
         with (cauth.with_classroom_session(required_scopes=_SEND_SCOPES) as classroom,
-              campus.with_user_session() as campus_client):
+              campus_session.user_session() as campus_client):
             try:
                 assignment = campus_client.api.assignments[assignment_id].get()
             except Exception as e:

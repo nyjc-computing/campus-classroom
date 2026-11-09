@@ -10,8 +10,8 @@ from dataclasses import asdict
 import flask
 from campus_python.errors import APIError
 
+from .. import campus_session, enrollment
 from .. import classroom_auth as cauth
-from .. import enrollment
 
 
 def upstream_error_response(e: APIError):
@@ -58,7 +58,6 @@ def register_routes(app: flask.Flask, login_manager):
         degradation cannot leak anything — it only ever hides.
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
 
         try:
             my_courses = enrollment.user_courses()
@@ -69,7 +68,7 @@ def register_routes(app: flask.Flask, login_manager):
             )
             my_courses = {}
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             assignments = client.api.assignments.list()
 
         visible = [
@@ -95,13 +94,12 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Created assignment as JSON
         """
-        campus = flask.current_app.campus
         data = flask.request.get_json()
 
         if not data or "title" not in data:
             return flask.jsonify({"error": "title is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 assignment = client.api.assignments.new(
                     title=data["title"],
@@ -126,8 +124,7 @@ def register_routes(app: flask.Flask, login_manager):
             Assignment as JSON, or 404 if not found or not owned
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 assignment = client.api.assignments[assignment_id].get()
             except Exception as e:
@@ -151,13 +148,12 @@ def register_routes(app: flask.Flask, login_manager):
             Updated assignment as JSON, or 404 if not found
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "No update data provided"}), 400
 
         # Check ownership first
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 current = client.api.assignments[assignment_id].get()
             except Exception as e:
@@ -207,8 +203,7 @@ def register_routes(app: flask.Flask, login_manager):
             204 on success, 404 if not found, 409 if locked
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership first
             try:
                 current = client.api.assignments[assignment_id].get()
@@ -253,14 +248,13 @@ def register_routes(app: flask.Flask, login_manager):
             Updated assignment as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data or "course_id" not in data or "coursework_id" not in data:
             return flask.jsonify(
                 {"error": "course_id and coursework_id are required"}
             ), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.assignments[assignment_id].get()
@@ -293,8 +287,7 @@ def register_routes(app: flask.Flask, login_manager):
             Updated assignment as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.assignments[assignment_id].get()

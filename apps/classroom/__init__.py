@@ -11,8 +11,8 @@ from campus import flask_campus
 from campus.common import env
 from dotenv import load_dotenv
 
+from . import campus_session, documents, enrollment, routes
 from . import classroom_auth as cauth
-from . import documents, enrollment, routes
 
 # Load environment variables from .env file
 load_dotenv()
@@ -245,7 +245,7 @@ def create_app():
 
         if assignment is None:
             try:
-                with campus.with_user_session() as client:
+                with campus_session.user_session() as client:
                     assignment = client.api.assignments[assignment_id].get()
             except Exception as e:
                 if "not found" in str(e).lower():
