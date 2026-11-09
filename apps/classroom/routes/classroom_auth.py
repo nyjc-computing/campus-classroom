@@ -52,8 +52,14 @@ def register_routes(app: flask.Flask, login_manager):
                     {"error": {"code": err.code, "message": err.message}}
                 ), 401
             flask.flash(err.message, "warning")
+            # full_path keeps pins like /a/<id>?course=<cid> across the
+            # OAuth round trip (full_path appends a bare '?' when the
+            # query is empty — strip it).
             return flask.redirect(
-                flask.url_for("auth.login", next=flask.request.path)
+                flask.url_for(
+                    "auth.login",
+                    next=flask.request.full_path.rstrip("?"),
+                )
             )
         if wants_json:
             payload: dict = {"error": {"code": err.code, "message": err.message}}

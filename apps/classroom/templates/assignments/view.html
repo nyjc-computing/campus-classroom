@@ -219,6 +219,7 @@ async function saveEdit(e) {
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, err)) return;
             throw new Error(formatApiError(err, 'Failed to save assignment'));
         }
 
@@ -264,7 +265,13 @@ function showPickerError(err) {
     const box = document.getElementById('picker-error');
     const e = (err && err.error) || {};
     let html;
-    if (e.code === 'classroom_not_connected' || e.code === 'classroom_missing_scopes') {
+    if (e.code === 'campus_session_expired') {
+        // The Campus grant behind the app session died (#98); the only
+        // remedy is re-entering the Campus OAuth flow, which returns here.
+        html = `${escapeHtml(e.message)}
+            <a href="/login?next=${encodeURIComponent(location.pathname + location.search)}"
+               class="btn btn-sm btn-primary mt-2">Sign in to Campus</a>`;
+    } else if (e.code === 'classroom_not_connected' || e.code === 'classroom_missing_scopes') {
         // Google Classroom tokens are held by campus.auth (issue #30);
         // connecting/reconnecting happens once on the profile page.
         const target = e.reconnect_url || PROFILE_INTEGRATIONS_URL;

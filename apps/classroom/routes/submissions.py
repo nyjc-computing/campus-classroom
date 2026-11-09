@@ -15,7 +15,7 @@ rule).
 
 import flask
 
-from .. import documents, enrollment
+from .. import campus_session, documents, enrollment
 
 
 def _enrollment_denied():
@@ -76,7 +76,6 @@ def register_routes(app: flask.Flask, login_manager):
             JSON array of submissions
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         assignment_id = flask.request.args.get("assignment_id")
         student_id = flask.request.args.get("student_id")
         course_id = flask.request.args.get("course_id")
@@ -86,7 +85,7 @@ def register_routes(app: flask.Flask, login_manager):
         if not student_id and not assignment_id:
             student_id = user_id
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             if assignment_id:
                 try:
                     assignment = client.api.assignments[assignment_id].get()
@@ -125,7 +124,6 @@ def register_routes(app: flask.Flask, login_manager):
             Created submission as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json()
 
         if not data:
@@ -137,7 +135,7 @@ def register_routes(app: flask.Flask, login_manager):
         if "course_id" not in data:
             return flask.jsonify({"error": "course_id is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             assignment = _load_assignment(client, data["assignment_id"])
             if assignment is None:
                 return flask.jsonify({"error": "Assignment not found"}), 404
@@ -175,8 +173,7 @@ def register_routes(app: flask.Flask, login_manager):
             Submission as JSON, or 404 if not found or not visible
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 submission = client.api.submissions[submission_id].get()
             except Exception as e:
@@ -208,8 +205,7 @@ def register_routes(app: flask.Flask, login_manager):
             JSON array of submissions
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             try:
                 assignment = client.api.assignments[assignment_id].get()
             except Exception as e:
@@ -238,13 +234,12 @@ def register_routes(app: flask.Flask, login_manager):
             JSON array of submissions
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         course_id = flask.request.args.get("course_id")
 
         if student_id != user_id:
             return flask.jsonify({"error": "Submission not found"}), 404
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             if course_id:
                 # Get submissions for this student, filtered by course
                 all_submissions = client.api.submissions.by_student(student_id)
@@ -266,12 +261,11 @@ def register_routes(app: flask.Flask, login_manager):
             Submission as JSON, or 404 if not found
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         assignment_id = flask.request.args.get("assignment_id")
         if not assignment_id:
             return flask.jsonify({"error": "assignment_id is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             submissions = client.api.submissions.list(
                 assignment_id=assignment_id,
                 student_id=user_id,
@@ -292,12 +286,11 @@ def register_routes(app: flask.Flask, login_manager):
             Updated submission as JSON, or 404 if not found
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "No update data provided"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership (students can update their own submissions)
             try:
                 current = client.api.submissions[submission_id].get()
@@ -357,8 +350,7 @@ def register_routes(app: flask.Flask, login_manager):
             204 on success, 404 if not found
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.submissions[submission_id].get()
@@ -393,7 +385,6 @@ def register_routes(app: flask.Flask, login_manager):
             Updated submission as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "Request body required"}), 400
@@ -404,7 +395,7 @@ def register_routes(app: flask.Flask, login_manager):
         if "response_text" not in data:
             return flask.jsonify({"error": "response_text is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.submissions[submission_id].get()
@@ -444,7 +435,6 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated submission as JSON
         """
-        campus = flask.current_app.campus
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "Request body required"}), 400
@@ -455,7 +445,7 @@ def register_routes(app: flask.Flask, login_manager):
         if "feedback_text" not in data:
             return flask.jsonify({"error": "feedback_text is required"}), 400
 
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # For MVP, any authenticated user can add feedback
             # In production, verify the user is a teacher for this course
 
@@ -476,8 +466,7 @@ def register_routes(app: flask.Flask, login_manager):
             Updated submission as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.submissions[submission_id].get()
@@ -509,8 +498,7 @@ def register_routes(app: flask.Flask, login_manager):
             Updated submission as JSON
         """
         user_id = flask.g.user.id
-        campus = flask.current_app.campus
-        with campus.with_user_session() as client:
+        with campus_session.user_session() as client:
             # Check ownership
             try:
                 current = client.api.submissions[submission_id].get()
