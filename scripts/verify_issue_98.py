@@ -72,16 +72,33 @@ class _Assignments:
         return SimpleNamespace(get=lambda: record)
 
 
+class FakeBroker:
+    """auth.broker stand-in: hands out one canned release dict."""
+
+    @staticmethod
+    def token(provider, integration, *, min_scopes=None):  # noqa: ARG002, ARG004
+        assert (provider, integration) == ("google", "classroom")
+        return {"access_token": "broker-token-1", "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/classroom.courses.readonly"}
+
+
 class FakeCampus:
     """campus_python.Campus stand-in for the #98 state.
 
-    The app-scoped session works (the /a/ primary read succeeds); the
-    user-scoped session ALWAYS fails at the login-session token mint —
-    the OAuth invalid_grant 400 the dead campus grant produces.
+    The app-scoped session works (the /a/ primary read succeeds). The
+    user-scoped session fails at the login-session token mint with the
+    OAuth invalid_grant 400 the dead campus grant produces; fail_mints
+    bounds how many consecutive mints fail (default: every one — the
+    dead-grant state; a small N simulates a transient store failure
+    that the #98 retry must paper over).
     """
 
-    def __init__(self, assignments):
+    def __init__(self, assignments, fail_mints=10**9):
         self._assignments = assignments
+        self.fail_mints = fail_mints
+        self.mint_calls = 0
+        self.auth = SimpleNamespace(broker=FakeBroker())
 
     @contextmanager
     def with_app_session(self):
@@ -90,8 +107,10 @@ class FakeCampus:
 
     @contextmanager
     def with_user_session(self):
-        raise INVALID_GRANT_400
-        yield  # pragma: no cover — the mint fails before any work
+        self.mint_calls += 1
+        if self.mint_calls <= self.fail_mints:
+            raise INVALID_GRANT_400
+        yield SimpleNamespace(auth=SimpleNamespace(broker=FakeBroker()))
 
 
 ASSIGNMENTS = {
@@ -306,6 +325,49 @@ except cauth.ClassroomAuthError as err:  # noqa: F841 — the old wrong answer
 check("enrollment bridge -> CampusSessionExpiredError (not BrokerConfig)",
       isinstance(raised, cauth.CampusSessionExpiredError),
       f"raised={raised!r}")
+
+
+# --- 5. the #98 retry: one transient mint failure is papered over ------
+print("== transient mint failures are retried once ==")
+
+transient = FakeCampus(ASSIGNMENTS, fail_mints=1)
+app.campus = transient
+opened = False
+with app.app_context():
+    try:
+        with campus_session.user_session():
+            opened = True
+    except cauth.CampusSessionExpiredError:
+        opened = False
+check("one transient mint failure -> retried, session opens",
+      opened and transient.mint_calls == 2,
+      f"opened={opened} mint_calls={transient.mint_calls}")
+
+persistent = FakeCampus(ASSIGNMENTS, fail_mints=2)
+app.campus = persistent
+expired = False
+with app.app_context():
+    try:
+        with campus_session.user_session():
+            opened = True
+    except cauth.CampusSessionExpiredError:
+        expired = True
+check("two consecutive mint failures -> CampusSessionExpiredError",
+      expired and persistent.mint_calls == 2,
+      f"expired={expired} mint_calls={persistent.mint_calls}")
+
+# The broker release builds its own Campus (the #92 throwaway); patch
+# the constructor to hand out a transient-failing instance.
+transient_broker = FakeCampus(ASSIGNMENTS, fail_mints=1)
+campus_python.Campus = lambda timeout=None: transient_broker  # noqa: ARG005
+with app.app_context():
+    data = cauth._broker_release([enrollment.COURSES_READONLY_SCOPE])
+check("broker release retries a transient mint failure",
+      data.get("access_token") == "broker-token-1"
+      and transient_broker.mint_calls == 2,
+      f"data={ {k: data.get(k) for k in ('access_token',)} } "
+      f"mint_calls={transient_broker.mint_calls}")
+campus_python.Campus = lambda timeout=None: FAKE_CAMPUS  # noqa: ARG005
 
 print()
 if failures:

@@ -30,6 +30,7 @@ Architecture (docs/auth-bridge.md has the full rationale):
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from contextlib import contextmanager
@@ -50,6 +51,9 @@ from campus_python.errors import (
 from campus_python.errors import (
     NotFoundError as CampusNotFoundError,
 )
+
+logger = logging.getLogger(__name__)
+
 
 # --- Scope inventory (PRD §6.4 MVP set, issue #9) ---------------------------
 
@@ -328,11 +332,30 @@ def _broker_release(min_scopes: list[str]) -> dict:
     holding a user session would otherwise 403 its mint away).
     """
     campus = campus_python.Campus(timeout=60)
-    try:
+
+    def _release_once() -> dict:
         with campus.with_user_session() as client:
-            data = client.auth.broker.token(
+            return client.auth.broker.token(
                 "google", "classroom", min_scopes=min_scopes or None,
             )
+
+    try:
+        try:
+            data = _release_once()
+        except CampusClientError as err:
+            if (err.oauth_error or "") != "invalid_grant":
+                raise
+            # A transient failure on the auth service's token store
+            # surfaces with the exact invalid_grant a dead grant
+            # produces (#98 investigation, 2026-11-10): retry the mint
+            # once before translating — a grant that is genuinely gone
+            # fails the retry too and lands in _broker_error as usual.
+            logger.warning(
+                "Campus grant mint rejected (%s: %s) during the broker "
+                "release; retrying once before surfacing re-auth (#98)",
+                err.oauth_error, err,
+            )
+            data = _release_once()
     except CampusMalformedResponseError as err:
         raise OAuthFlowError(
             "Campus token broker returned a malformed response."

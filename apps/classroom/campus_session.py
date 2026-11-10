@@ -22,6 +22,7 @@ paths, so callers need no per-site handling.
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -30,6 +31,8 @@ import flask
 from campus_python.errors import APIError as CampusAPIError
 
 from . import classroom_auth as cauth
+
+logger = logging.getLogger(__name__)
 
 
 def is_reauth_required(err: BaseException) -> bool:
@@ -51,15 +54,33 @@ def user_session() -> Iterator[campus_python.Campus]:
     Raises the classroom_auth errors on top of the SDK's own: a
     re-authentication-required failure surfaces as
     `cauth.CampusSessionExpiredError` (never a raw 500).
+
+    A rejected mint is retried once before the session is declared
+    expired (#98 investigation, 2026-11-10): a transient failure on the
+    auth service's token store surfaces with the exact same
+    invalid_grant error a dead grant produces, and one immediate retry
+    papers over the transient case — a grant that is genuinely gone
+    fails the retry too, and re-authentication remains the remedy.
     """
     campus = flask.current_app.campus
     try:
         with campus.with_user_session() as client:
             yield client
     except CampusAPIError as err:
-        if is_reauth_required(err):
-            raise cauth.CampusSessionExpiredError() from err
-        raise
+        if not is_reauth_required(err):
+            raise
+        logger.warning(
+            "Campus grant mint rejected (%s: %s); retrying once before "
+            "treating the session as expired (#98)",
+            err.oauth_error or "unknown_error", err,
+        )
+        try:
+            with campus.with_user_session() as client:
+                yield client
+        except CampusAPIError as retry_err:
+            if is_reauth_required(retry_err):
+                raise cauth.CampusSessionExpiredError() from retry_err
+            raise
 
 
 __all__ = ["is_reauth_required", "user_session"]
