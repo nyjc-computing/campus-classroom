@@ -41,10 +41,22 @@ tracker campus#733). This app holds no Google tokens of any kind.
 - **Releasing (every request that needs Classroom):**
   `with_classroom_session()` POSTs
   `{campus.auth}/auth/v1/broker/google/classroom/` with the user's **campus**
-  bearer token — the one the app already holds from its campus login
-  session (SDK `auth.get_token()`, refreshed when expired via the
-  refresh-token grant). The response carries `access_token`, `expires_in`
-  and `scope`; **no refresh token ever leaves campus.auth**.
+  bearer token — re-acquired per use from the app's campus login session
+  via the login-session token route (`POST /logins/<id>/token`,
+  campus#963/#118; client-principal only — A10 — which is why the
+  broker release runs on a throwaway Campus instance, see
+  `_broker_release`). The route rotates an expired grant server-side,
+  so the returned bearer is always live. The response carries
+  `access_token`, `expires_in` and `scope`; **no refresh token ever
+  leaves campus.auth**.
+- **Dead/transient campus grants (#98, 2026-11-10):** when the mint
+  behind `with_user_session()` is rejected with OAuth `invalid_grant`,
+  the seam retries **once** (a transient token-store failure produces
+  the identical error; see `campus_session.user_session()` and
+  `_broker_release`) and only a second rejection raises
+  `CampusSessionExpiredError`. That error renders as 401 JSON on /api/
+  paths and a redirect into the campus re-login flow — preserving the
+  full path+query (`?course=` pins survive) — on browser paths.
 - **Token lifetime:** in-memory only, until `expires_in` (60 s skew), then
   the app simply asks the broker again — campus refreshes its stored
   credential silently server-side. A Classroom 401 triggers one
@@ -64,6 +76,7 @@ tracker campus#733). This app holds no Google tokens of any kind.
 | 404 no connected credential | `NotConnectedError` | `classroom_not_connected` (403) | flash + connection page (profile CTA) |
 | 403 + `details.missing_scopes` | `MissingClassroomScopesError` | `classroom_missing_scopes` (403) + `missing_scopes` + `reconnect_url` | flash + connection page |
 | 401 (campus bearer unusable) | `CampusSessionExpiredError` | `campus_session_expired` (401) | redirect into campus re-login flow |
+| OAuth `invalid_grant` 400 from the campus mint (dead login-session grant), after one retry | `CampusSessionExpiredError` | `campus_session_expired` (401) | redirect into campus re-login flow |
 | 400 `AUTH_INVALID_SCOPE` / bridge-guard 403 | `BrokerConfigError` (+ ERROR log) | `classroom_broker_config` (502) | flash + connection page |
 | broker unreachable / malformed | `OAuthFlowError` | `classroom_oauth_flow_error` (502) | flash + connection page |
 
@@ -132,5 +145,10 @@ bearer/min_scopes on the wire, nothing-persisted, campus-credential
 refresh, proactive + 401-triggered re-release, the full error mapping,
 the send-scope local gate, and the `/classroom` page states.
 `scripts/verify_issue_10.py` covers the send flow on the same harness.
+`scripts/verify_issue_98.py` (#98) covers the dead-campus-grant
+contract end to end: 401 `campus_session_expired` JSON on /api/ paths,
+`/a/` redirect into `/login?next=` with path+query preserved, the
+one-retry on transient mint failures, and the broker-seam mapping
+(invalid_grant → CampusSessionExpiredError, never BrokerConfigError).
 (The pre-broker `verify_issue_9.py` was deleted with the legacy flow it
 verified; its history lives in issue #9 / PR #17/#20.)

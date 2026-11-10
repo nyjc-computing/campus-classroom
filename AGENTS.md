@@ -140,6 +140,14 @@ Prerequisites and gotchas:
 - Page-context `fetch` mutations need the
   `X-Requested-With: XMLHttpRequest` CSRF header, and linked
   assignments are PATCH-locked (409) until unlinked.
+- **Campus grant failures degrade to re-auth, not 500s** (classroom#98,
+  #99/#101, 2026-11-10): grants are re-acquired per request; a rejected
+  mint is retried once, then /api/ paths answer 401
+  `campus_session_expired` (the JS redirects through `/login?next=`,
+  query preserved) and browser paths redirect into the campus OAuth
+  flow. If you see these mid-E2E, re-auth fixes it; persistent
+  occurrences point at the auth service's token store (the
+  failed-write dangling-row class was campus#1085, fixed 2026-11-10).
 - Embed/app-hosting runbook:
   [docs/document-embeds.md](docs/document-embeds.md).
 
