@@ -307,12 +307,25 @@ def _broker_release(min_scopes: list[str]) -> dict:
     `_broker_error` so callers keep their issue #30 error contract.
 
     The broker session runs on a THROWAWAY Campus instance, not the
-    app-wide one: this is reached from inside routes that already hold
-    their own `with_user_session()` on the shared instance (the
-    enrollment bridge), and a nested session's teardown resets the
-    shared clients to app credentials — stripping the route's user
-    bearer mid-request (campus-api-python#159 / #92, seen live as
-    client-principal 403s on student submissions).
+    app-wide one. Two reasons — one historical, one structural:
+
+    - Historical (#92): a nested session's teardown used to reset the
+      shared clients to app credentials, stripping the route's user
+      bearer mid-request (fixed in campus-api-python#159; this repo
+      pins SDK >= 0.7.1, so nesting is safe again).
+    - Structural (why the throwaway STAYS even with #159 fixed): the
+      token mint at with_user_session() ENTRY runs before the SDK
+      touches authorization, so on a shared instance already carrying
+      an outer session's bearer the mint request would present that
+      user bearer — and the login-session token route denies user
+      principals outright (campus#963/A10; verified live 2026-11-10:
+      bearer-only mint -> 403 FORBIDDEN). A fresh instance holds no
+      bearer, so its mint authenticates as the client (Basic), which
+      is what A10 requires.
+
+    Do NOT swap this for flask.current_app.campus unless the SDK gains
+    per-request principal scoping (a nested release inside any route
+    holding a user session would otherwise 403 its mint away).
     """
     campus = campus_python.Campus(timeout=60)
     try:
