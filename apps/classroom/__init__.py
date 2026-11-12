@@ -199,9 +199,46 @@ def create_app():
     @app.get("/submissions/<submission_id>")
     @login_manager.login_required
     def submission_view(submission_id: str, **_):
-        """View submission page."""
+        """Review page for one submission (PRD §6.9 ACL, #104).
+
+        Allowed: the assignment's owner (staff review, the pre-#104
+        behavior) and — new — the submission's own student, who opens
+        this page from the review-link chip the mirror attaches in
+        Classroom; their view is read-only. Everyone else gets 404 so
+        the submission's existence is not revealed, matching the
+        submission API's ACL. Teacher-only fields (Classroom-native
+        draftGrade) render nowhere on this page — grades stay
+        Classroom-native (parked phase-2), so there is nothing to leak.
+        """
+        user_id = flask.g.user.id
+        with campus_session.user_session() as client:
+            try:
+                submission = client.api.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    flask.abort(404)
+                raise
+
+            if str(getattr(submission, "student_id", "")) == str(user_id):
+                read_only = True
+            else:
+                try:
+                    assignment = client.api.assignments[
+                        submission.assignment_id].get()
+                except Exception as e:
+                    if "not found" in str(e).lower():
+                        flask.abort(404)
+                    raise
+                if str(getattr(assignment, "created_by", "")) != str(user_id):
+                    flask.abort(404)
+                read_only = False
+
+        # CampusSessionExpiredError propagates: the app-wide handler
+        # redirects browser paths into the campus OAuth flow (#98).
         return flask.render_template(
-            "submissions/view.html", submission_id=submission_id
+            "submissions/view.html",
+            submission_id=submission_id,
+            read_only=read_only,
         )
 
     # Shareable assignment page (PRD §6.9): the Link Material fallback posts

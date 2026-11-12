@@ -110,6 +110,22 @@ CLASSROOM_SCOPES_SEND = (
     "https://www.googleapis.com/auth/classroom.coursework.students",
 )
 
+# classroom.coursework.me is needed by issue #104's submission mirror:
+# the STUDENT-side verbs courses.courseWork.studentSubmissions.turnIn /
+# .reclaim / :modifyAttachments require it (scope coursework.me ONLY —
+# the send flow's teacher-write coursework.students does not cover them;
+# state/late are read-only to everyone). Same FEATURE-scope pattern as
+# CLASSROOM_SCOPES_SEND: never requested at connect, demanded by the
+# mirror via with_classroom_session(required_scopes=CLASSROOM_SCOPES_MIRROR)
+# and enforced locally against the returned grant — a credential without
+# it raises MissingClassroomScopesError, which the mirror degrades to a
+# logged skip (campus#1095 tracks adding the scope to the vault cap and
+# the GCP OAuth client so reconnects can grant it; until then the mirror
+# simply stays skipped).
+CLASSROOM_SCOPES_MIRROR = (
+    "https://www.googleapis.com/auth/classroom.coursework.me",
+)
+
 
 # Refresh the access token this many seconds before it actually expires.
 _EXPIRY_SKEW_SECONDS = 60
@@ -130,16 +146,25 @@ CLASSROOM_API_BASE = "https://classroom.googleapis.com"
 
 # --- campus.auth token broker (issue #30, library resource api#82) -----------
 
-# Scopes the broker may be ASKED for: deliberately the conservative set
-# (MVP + identity) even though the dev vault's observed cap is wider
-# (coursework.students + openid included, verified 2026-10-03). Asking
-# beyond a deployment's cap is a 400 AUTH_INVALID_SCOPE — a configuration
-# bug, not a re-consent situation — so only this floor is ever asked;
-# caller requirements beyond it (CLASSROOM_SCOPES_SEND) are enforced
-# locally against the returned grant, which the local scope gate does
-# just as correctly. Widen this set only if broker-authoritative
-# missing-scope 403s are wanted for the feature scopes.
-_BROKER_ASKABLE = frozenset(CLASSROOM_SCOPES_MVP) | frozenset(GOOGLE_IDENTITY_SCOPES)
+# Scopes the broker may be ASKED for: the conservative floor (MVP +
+# identity) plus the mirror scope (#104) — the one feature scope whose
+# missing-scope answer the design wants broker-authoritative, because a
+# MissingClassroomScopesError 403 there feeds the mirror's skip + flag
+# (campus#1095 widens the vault cap so the ask succeeds after reconnect).
+# Until that cap widening lands, asking for the mirror scope is rejected
+# as 400 AUTH_INVALID_SCOPE → BrokerConfigError; the mirror maps that to
+# the same designed skip (WARNING + skipped status) instead of failing
+# loudly on every submit. SEND (coursework.students) stays OUT of the
+# ask floor: its grant can never 403 as missing-scope (vault cap already
+# covers it), so the local scope gate does that job just as correctly.
+# Asking beyond a deployment's cap is a 400 AUTH_INVALID_SCOPE — a
+# configuration bug, not a re-consent situation — so never widen this
+# set beyond scopes a deployment's cap is expected to carry.
+_BROKER_ASKABLE = (
+    frozenset(CLASSROOM_SCOPES_MVP)
+    | frozenset(GOOGLE_IDENTITY_SCOPES)
+    | frozenset(CLASSROOM_SCOPES_MIRROR)
+)
 
 # campus-profile origins (the integrations/connect host). development is
 # the Railway dev deployment; staging/production follow the campus-suite
@@ -532,6 +557,82 @@ class ClassroomClient:
             "POST",
             f"v1/courses/{course_id}/courseWork/{coursework_id}/addOnAttachments",
             json=body,
+        )
+
+    # -- Submission mirror (issue #104) --
+
+    # All four methods run on the OWNING STUDENT's released credential
+    # (with_classroom_session(required_scopes=CLASSROOM_SCOPES_MIRROR)):
+    # turnIn/reclaim are student-only verbs (scope coursework.me ONLY)
+    # and modifyAttachments is allowed to the owning student too.
+    # teachers would use .patch/.return instead — not needed here.
+
+    def student_submissions_list(
+            self, course_id: str, coursework_id: str,
+    ) -> list[dict]:
+        """List the caller's student submissions for one CourseWork
+        (courses.courseWork.studentSubmissions.list with userId=me —
+        Classroom resolves 'me' against the released token's user, which
+        is the owning student; a student can only ever see their own
+        submission). Follows nextPageToken, capped like courses_list.
+        """
+        params: dict = {"userId": "me"}
+        submissions: list[dict] = []
+        for _ in range(_COURSES_MAX_PAGES):
+            data = self.request(
+                "GET",
+                f"v1/courses/{course_id}/courseWork/{coursework_id}"
+                f"/studentSubmissions",
+                params=params,
+            )
+            submissions.extend(data.get("studentSubmissions", []))
+            next_token = data.get("nextPageToken")
+            if not next_token:
+                return submissions
+            params["pageToken"] = next_token
+        return submissions
+
+    def student_submission_modify_attachments(
+            self, course_id: str, coursework_id: str, submission_id: str,
+            add_attachments: list[dict],
+    ) -> dict:
+        """Add attachments to a student submission
+        (courses.courseWork.studentSubmissions.modifyAttachments). Link
+        entries are url-only — Classroom fetches title/thumbnail itself."""
+        return self.request(
+            "POST",
+            f"v1/courses/{course_id}/courseWork/{coursework_id}"
+            f"/studentSubmissions/{submission_id}:modifyAttachments",
+            json={"addAttachments": add_attachments},
+        )
+
+    def student_submission_turn_in(
+            self, course_id: str, coursework_id: str, submission_id: str,
+    ) -> dict:
+        """Turn in a student submission
+        (courses.courseWork.studentSubmissions.turnIn; owning student
+        only, coursework.me scope). An empty assignmentSubmission turns
+        in legally — the Campus snapshot stays the source of truth."""
+        return self.request(
+            "POST",
+            f"v1/courses/{course_id}/courseWork/{coursework_id}"
+            f"/studentSubmissions/{submission_id}:turnIn",
+            json={},
+        )
+
+    def student_submission_reclaim(
+            self, course_id: str, coursework_id: str, submission_id: str,
+    ) -> dict:
+        """Reclaim a turned-in student submission
+        (courses.courseWork.studentSubmissions.reclaim; owning student
+        only, coursework.me scope). A FAILED_PRECONDITION (409) means
+        there is nothing to reclaim (already NEW/reclaimed) — callers
+        treat that as success."""
+        return self.request(
+            "POST",
+            f"v1/courses/{course_id}/courseWork/{coursework_id}"
+            f"/studentSubmissions/{submission_id}:reclaim",
+            json={},
         )
 
     # -- Iframe context (issue #12, PRD §4.4 GC-7) --

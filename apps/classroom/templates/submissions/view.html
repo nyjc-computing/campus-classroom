@@ -19,6 +19,12 @@
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
 const submissionId = {{ submission_id | tojson }};
+// Read-only review (#104): the owning student views their own submission
+// here (they arrive from the review-link chip in Classroom) — no
+// editing, no auto-save, no submit. The owner keeps the full view.
+// Grades stay Classroom-native: no grade fields render on this page
+// for anyone — teacher grading happens in Classroom itself.
+const readOnly = {{ read_only | tojson }};
 
 async function loadSubmission() {
     try {
@@ -72,7 +78,7 @@ async function loadSubmission() {
                 ${assignment.questions.map(q => renderQuestionWithResponse(q, submission)).join('')}
             </div>
 
-            ${!submission.submitted_at ? `
+            ${(!submission.submitted_at && !readOnly) ? `
                 <div class="d-grid gap-2 mt-4">
                     <button type="button" class="btn btn-primary" onclick="submitSubmission()">Submit Assignment</button>
                 </div>
@@ -114,13 +120,13 @@ function renderQuestionWithResponse(q, submission) {
             </div>
 
             <div class="response-box">
-                <label class="form-label text-muted small">Your Response:</label>
+                <label class="form-label text-muted small">${readOnly ? "Student's Response:" : "Your Response:"}</label>
                 <textarea
                     class="form-control"
                     id="response-${q.id}"
                     rows="3"
-                    ${submission.submitted_at ? 'disabled' : ''}
-                    placeholder="${submission.submitted_at ? 'No response provided' : 'Type your response...'}"
+                    ${(submission.submitted_at || readOnly) ? 'disabled' : ''}
+                    placeholder="${submission.submitted_at ? 'No response provided' : (readOnly ? 'No response provided' : 'Type your response...')}"
                     onchange="autoSave('${q.id}', this.value)">${escapeHtml(response?.response_text || '')}</textarea>
             </div>
 
@@ -217,6 +223,7 @@ function timestamp(dateStr) {
 let autoSaveTimeouts = {};
 
 function autoSave(questionId, value) {
+    if (readOnly) return;  // read-only review (#104): students never save here
     clearTimeout(autoSaveTimeouts[questionId]);
     autoSaveTimeouts[questionId] = setTimeout(async () => {
         await fetch(`/api/v1/submissions/${submissionId}/responses`, {
