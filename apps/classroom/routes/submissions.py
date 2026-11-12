@@ -15,7 +15,7 @@ rule).
 
 import flask
 
-from .. import campus_session, documents, enrollment
+from .. import campus_session, documents, enrollment, submission_mirror
 
 
 def _enrollment_denied():
@@ -462,6 +462,12 @@ def register_routes(app: flask.Flask, login_manager):
     def api_finalize_submission(submission_id: str, **_):
         """Mark submission as submitted (sets submitted_at).
 
+        After the campus action commits, the action is mirrored into
+        Google Classroom (#104: attach the per-submission review link
+        chip and turn in) — best-effort, never affecting this route's
+        own success/failure; the response carries a "mirror" status key
+        (mirrored / skipped_missing_scope / failed).
+
         Returns:
             Updated submission as JSON
         """
@@ -487,12 +493,27 @@ def register_routes(app: flask.Flask, login_manager):
             client.api.submissions[submission_id].submit()
             updated = client.api.submissions[submission_id].get()
 
-        return flask.jsonify(updated.to_resource())
+        # Campus committed; mirror into Classroom on the student's own
+        # credential. Best-effort by contract: mirror_* never raises.
+        # (Outside the campus session, so the throwaway broker-release
+        # instance never nests inside the shared one — classroom_auth's
+        # _broker_release seam.)
+        mirror_status = submission_mirror.mirror_submit(assignment, updated)
+
+        payload = updated.to_resource()
+        payload["mirror"] = mirror_status
+        return flask.jsonify(payload)
 
     @app.post("/api/v1/submissions/<submission_id>/unsubmit")
     @login_manager.login_required
     def api_unsubmit_submission(submission_id: str, **_):
         """Unsubmit a submission (allows student to edit again).
+
+        After the campus action commits, the action is mirrored into
+        Google Classroom (#104: reclaim the turned-in submission; its
+        already-reclaimed precondition counts as success) — best-effort,
+        never affecting this route's own success/failure; the response
+        carries a "mirror" status key.
 
         Returns:
             Updated submission as JSON
@@ -524,7 +545,13 @@ def register_routes(app: flask.Flask, login_manager):
             client.api.submissions[submission_id].unsubmit()
             updated = client.api.submissions[submission_id].get()
 
-        return flask.jsonify(updated.to_resource())
+        # Campus committed; mirror into Classroom on the student's own
+        # credential (see api_finalize_submission for the contract).
+        mirror_status = submission_mirror.mirror_unsubmit(assignment, updated)
+
+        payload = updated.to_resource()
+        payload["mirror"] = mirror_status
+        return flask.jsonify(payload)
 
 
 __all__ = ["register_routes"]
