@@ -541,6 +541,17 @@ class ClassroomClient:
         """Create a CourseWork post (courses.courseWork.create)."""
         return self.request("POST", f"v1/courses/{course_id}/courseWork", json=body)
 
+    def coursework_get(self, course_id: str, coursework_id: str) -> dict:
+        """Fetch one CourseWork post (courses.courseWork.get).
+
+        #105's dashboard badges read its `state`: Send-to-Classroom
+        creates the post as a DRAFT that students cannot see until the
+        teacher clicks Assign in the Classroom UI.
+        """
+        return self.request(
+            "GET", f"v1/courses/{course_id}/courseWork/{coursework_id}"
+        )
+
     def coursework_patch(self, course_id: str, coursework_id: str, body: dict) -> dict:
         """Update mutable CourseWork fields (courses.courseWork.patch)."""
         return self.request(
