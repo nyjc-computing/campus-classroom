@@ -63,7 +63,13 @@ function isLocked() {
 async function loadAssignment() {
     try {
         const response = await fetch(`/api/v1/assignments/${assignmentId}`);
-        if (!response.ok) throw new Error('Failed to load assignment');
+        if (!response.ok) {
+            // A dead Campus grant (#98) answers 401 here: re-auth is the
+            // only remedy, so redirect before any generic error UI.
+            const data = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, data)) return;
+            throw new Error('Failed to load assignment');
+        }
 
         assignment = await response.json();
         render();

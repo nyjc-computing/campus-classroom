@@ -88,6 +88,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
 const MAX_APP_BYTES = 2000000;
 let appHtml = null;
@@ -141,6 +142,9 @@ async function publishApp() {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
+            // A dead Campus grant (#98) answers 401 here: re-auth is the
+            // only remedy, so redirect before any generic error UI.
+            if (handleSessionExpiry(response, data)) return;
             box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Deployment failed.')}</div>`;
             return;
         }
