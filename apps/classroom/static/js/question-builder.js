@@ -104,10 +104,18 @@ function ensureAppsLoaded() {
             headers: {'X-Requested-With': 'XMLHttpRequest'},
         })
             .then(response => {
-                if (!response.ok) throw new Error('Failed to load deployed apps');
+                if (!response.ok) {
+                    // A dead Campus grant (#98) answers 401 here: re-auth
+                    // is the only remedy, so redirect before the error path.
+                    return response.json().catch(() => ({})).then(data => {
+                        if (handleSessionExpiry(response, data)) return null;
+                        throw new Error('Failed to load deployed apps');
+                    });
+                }
                 return response.json();
             })
             .then(apps => {
+                if (!apps) return null;   // page is navigating to /login
                 window.CAMPUS_APPS = apps;
                 refreshAllAppSelects();
                 return apps;

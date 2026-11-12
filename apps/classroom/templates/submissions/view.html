@@ -13,20 +13,34 @@
     <div id="submission-container" class="d-none"></div>
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
 const submissionId = {{ submission_id | tojson }};
 
 async function loadSubmission() {
     try {
         const response = await fetch(`/api/v1/submissions/${submissionId}`);
-        if (!response.ok) throw new Error('Failed to load submission');
+        if (!response.ok) {
+            // A dead Campus grant (#98) answers 401 here: re-auth is the
+            // only remedy, so redirect before any generic error UI.
+            const data = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, data)) return;
+            throw new Error('Failed to load submission');
+        }
 
         const submission = await response.json();
         const container = document.getElementById('submission-container');
 
         // Also load assignment details for questions
         const assignmentResp = await fetch(`/api/v1/assignments/${submission.assignment_id}`);
-        if (!assignmentResp.ok) throw new Error('Failed to load assignment');
+        if (!assignmentResp.ok) {
+            const data = await assignmentResp.json().catch(() => ({}));
+            if (handleSessionExpiry(assignmentResp, data)) return;
+            throw new Error('Failed to load assignment');
+        }
 
         const assignment = await assignmentResp.json();
 
@@ -225,7 +239,11 @@ async function submitSubmission() {
             method: 'POST',
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
-        if (!response.ok) throw new Error('Failed to submit');
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, data)) return;
+            throw new Error('Failed to submit');
+        }
 
         alert('Assignment submitted!');
         location.reload();
