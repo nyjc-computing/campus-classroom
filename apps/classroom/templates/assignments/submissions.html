@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Submissions: {{ assignment_title }} - Campus Classroom{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4">
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('assignments_list') }}">Assignments</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('assignment_view', assignment_id=assignment_id) }}">{{ assignment_title }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Submissions</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">Submissions</h1>
+        <span class="text-muted">{{ assignment_title }}</span>
+    </div>
+
+    <div id="submissions-container">
+        <div class="text-center py-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading submissions...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script>
+// The page gate (apps/classroom __init__) already 404'd non-owners; this
+// fetch hits the same owner-only API, so the gate is enforced twice.
+const assignmentId = {{ assignment_id | tojson }};
+
+async function loadSubmissions() {
+    const container = document.getElementById('submissions-container');
+    try {
+        const response = await fetch(
+            `/api/v1/submissions/by-assignment/${encodeURIComponent(assignmentId)}`);
+        if (!response.ok) {
+            // A dead Campus grant (#98) answers 401 here: re-auth is the
+            // only remedy, so redirect before any generic error UI.
+            const data = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, data)) return;
+            throw new Error('Failed to load submissions');
+        }
+
+        const submissions = await response.json();
+
+        if (submissions.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5">
+                    <h5 class="text-muted">No submissions yet</h5>
+                    <p class="text-muted">
+                        When students open the assignment and start working,
+                        their submissions will appear here.
+                    </p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th scope="col">Student</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Responses</th>
+                            <th scope="col">Feedback</th>
+                            <th scope="col"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${submissions.map(submissionRowHtml).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error loading submissions:', error);
+        container.innerHTML = `
+            <div class="alert alert-danger">Failed to load submissions. Please refresh the page.</div>
+        `;
+    }
+}
+
+function submissionRowHtml(submission) {
+    // #104's submit response carries an ephemeral "mirror" status, but
+    // nothing is persisted on the submission record yet — so no
+    // "not mirrored to Classroom" flag can render here (issue #105
+    // notes its future home in the PR).
+    const reviewUrl = `/submissions/${encodeURIComponent(submission.id)}`;
+    const status = submission.submitted_at
+        ? `Submitted at ${timestamp(submission.submitted_at)}`
+        : 'Draft';
+    return `
+        <tr>
+            <td class="text-break">${escapeHtml(submission.student_id)}</td>
+            <td class="text-nowrap">${escapeHtml(status)}</td>
+            <td>${submission.responses.length}</td>
+            <td>${submission.feedback.length}</td>
+            <td class="text-end">
+                <a href="${reviewUrl}" class="btn btn-sm btn-outline-primary">Review</a>
+            </td>
+        </tr>`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function timestamp(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-SG', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    });
+}
+
+// Load on page view
+loadSubmissions();
+</script>
+{% endblock %}

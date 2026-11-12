@@ -41,6 +41,26 @@ def register_routes(app: flask.Flask, login_manager):
             for course in courses
         ]})
 
+    @app.get("/api/v1/classroom/coursework/<course_id>/<coursework_id>")
+    @login_manager.login_required
+    def api_classroom_coursework(course_id: str, coursework_id: str, **_):
+        """One CourseWork post's minimal fields, for dashboard badges (#105).
+
+        Relays only id/title/state — nothing assignment-content-bearing.
+        The call runs on the caller's own released credential, so
+        Classroom's own visibility rules apply. `state` answers the
+        staff-facing draft/assigned question: Send-to-Classroom creates
+        a DRAFT students cannot see until the teacher clicks Assign in
+        the Classroom UI (docs/document-embeds.md lifecycle vocabulary).
+        """
+        with cauth.with_classroom_session() as classroom:
+            coursework = classroom.coursework_get(course_id, coursework_id)
+        return flask.jsonify({
+            "id": coursework.get("id", coursework_id),
+            "title": coursework.get("title", ""),
+            "state": coursework.get("state", ""),
+        })
+
     @app.post("/api/v1/assignments/<assignment_id>/classroom/send")
     @login_manager.login_required
     # Canonical journey-name example (#840): the label is the yapper

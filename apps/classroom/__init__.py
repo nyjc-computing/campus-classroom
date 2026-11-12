@@ -195,6 +195,35 @@ def create_app():
             ),
         )
 
+    # Submissions drill-down (#105): one assignment's submissions, linked
+    # from the dashboard. Server-side gate mirrors the by-assignment
+    # API's ACL — the creator sees the page, everyone else (including
+    # enrolled students) gets 404 so the assignment's review surface is
+    # not revealed; the rows themselves are then client-fetched from the
+    # same owner-only API, so the gate is enforced twice.
+    @app.get("/assignments/<assignment_id>/submissions")
+    @login_manager.login_required
+    def assignment_submissions(assignment_id: str, **_):
+        """List one assignment's submissions (staff review, #105)."""
+        user_id = flask.g.user.id
+        with campus_session.user_session() as client:
+            try:
+                assignment = client.api.assignments[assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    flask.abort(404)
+                raise
+            if str(getattr(assignment, "created_by", "")) != str(user_id):
+                flask.abort(404)
+
+        # CampusSessionExpiredError propagates: the app-wide handler
+        # redirects browser paths into the campus OAuth flow (#98).
+        return flask.render_template(
+            "assignments/submissions.html",
+            assignment_id=assignment_id,
+            assignment_title=getattr(assignment, "title", assignment_id),
+        )
+
     # Submission UI routes
     @app.get("/submissions/<submission_id>")
     @login_manager.login_required
