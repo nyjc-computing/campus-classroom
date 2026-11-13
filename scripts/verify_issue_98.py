@@ -373,4 +373,115 @@ print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
     raise SystemExit(1)
+
+
+# --- 7. the review page (#104 chip target) -----------------------------------
+print("== /submissions/<id> review page degrades like the rest ==")
+
+# The 2026-11-13 live 500s: staff opened a review chip with a dead
+# grant — the mint path answered with session-resolution failures the
+# seam did not map, so the page 500ed instead of bouncing to /login.
+
+
+class _Submissions:
+    """client.api.submissions stand-in serving scripted submissions."""
+
+    def __init__(self, submissions):
+        self._submissions = submissions
+
+    def __getitem__(self, submission_id):
+        if submission_id not in self._submissions:
+            raise campus_errors.ConflictError(409, "Submission was deleted")
+        record = self._submissions[submission_id]
+        return SimpleNamespace(get=lambda: record)
+
+
+SUBMISSIONS = {
+    "sub-1": SimpleNamespace(
+        id="sub-1", assignment_id="a1", course_id="course-1",
+        student_id=STUDENT, submitted_at="2026-11-12T10:53:00Z",
+        responses=[], feedback=[],
+    ),
+}
+
+no_session_id = campus_errors.AuthenticationError(error_description=(
+    "No login session ID available: pass session_id or install a "
+    "session-id provider (campus_python.auth.v1.set_session_id_provider)."))
+check("missing login-session id (session-less flask session) -> re-auth",
+      campus_session.is_reauth_required(no_session_id))
+
+sessions_read_denial = campus_errors.AccessDeniedError(error_description=(
+    "No access grant designates this user for 'sessions:read' (#883): "
+    "designated authority is administered via the access-grant store"))
+check("sessions:read denial (dead login-session row) -> re-auth",
+      campus_session.is_reauth_required(sessions_read_denial))
+
+other_denial = campus_errors.AccessDeniedError(
+    403, "No access grant designates this user for 'clients:read' (#883)")
+check("clients:read denial -> NOT re-auth",
+      not campus_session.is_reauth_required(other_denial))
+
+
+class ReviewFakeCampus(FakeCampus):
+    """Healthy mint; the user-session client carries api stand-ins so
+    the review route's fetches can be scripted (the base class yields a
+    client with auth only)."""
+
+    def __init__(self, submissions, fail_mints=0):
+        super().__init__(ASSIGNMENTS, fail_mints=fail_mints)
+        self._submissions = submissions
+
+    @contextmanager
+    def with_user_session(self):
+        self.mint_calls += 1
+        if self.mint_calls <= self.fail_mints:
+            raise INVALID_GRANT_400
+        yield SimpleNamespace(api=SimpleNamespace(
+            submissions=_Submissions(self._submissions),
+            assignments=_Assignments(self._assignments)))
+
+
+staff_browser = app.test_client()
+seed_user(staff_browser, TEACHER)
+
+app.campus = ReviewFakeCampus({})
+r = staff_browser.get("/submissions/dead")
+loc = r.headers.get("Location", "")
+check("deleted submission -> 404 (dead chip from a cleared record)",
+      r.status_code == 404,
+      f"status={r.status_code} body={r.get_data(as_text=True)[:120]!r}")
+
+app.campus = ReviewFakeCampus(SUBMISSIONS)
+r = staff_browser.get("/submissions/sub-1")
+check("staff review of a live submission -> 200",
+      r.status_code == 200,
+      f"status={r.status_code} body={r.get_data(as_text=True)[:160]!r}")
+
+# The dead-grant shapes must bounce the review page into /login too —
+# the exact path the 2026-11-13 staff 500s came from.
+app.campus = FakeCampus(SUBMISSIONS)  # every mint fails
+r = staff_browser.get("/submissions/sub-1")
+loc = r.headers.get("Location", "")
+next_url = parse_qs(urlsplit(loc).query).get("next", [""])[0]
+check("dead grant on the review page -> 302 into /login (not 500)",
+      r.status_code == 302 and urlsplit(loc).path == "/login",
+      f"status={r.status_code} location={loc!r}")
+check("review-page next= preserves the submission path",
+      urlsplit(next_url).path == "/submissions/sub-1",
+      f"next={next_url!r}")
+app.campus = FAKE_CAMPUS
+
+# The /a/ owner notice points staff at the submissions drill-down —
+# the surface that actually shows submitted work (#105).
+owner_browser = app.test_client()
+seed_user(owner_browser, TEACHER)
+app.campus = ReviewFakeCampus(SUBMISSIONS)
+r = owner_browser.get("/a/a1?course=course-1")
+page = r.get_data(as_text=True)
+check("/a/ owner notice carries a View submissions link",
+      "/assignments/a1/submissions" in page,
+      f"status={r.status_code}")
+app.campus = FAKE_CAMPUS
+
+
 print("All checks passed.")
