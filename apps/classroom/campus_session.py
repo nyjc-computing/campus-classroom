@@ -28,6 +28,7 @@ from typing import Iterator
 
 import campus_python
 import flask
+from campus_python.errors import AccessDeniedError, AuthenticationError
 from campus_python.errors import APIError as CampusAPIError
 
 from . import classroom_auth as cauth
@@ -43,8 +44,29 @@ def is_reauth_required(err: BaseException) -> bool:
     The SDK exposes the OAuth error via `APIError.oauth_error` — from
     the response envelope's details, or recovered from the AUTH_* code
     when production strips them (#87).
+
+    Two more shapes mean the same thing and surfaced as 500s on the
+    submission review page (2026-11-13): the flask session can lose its
+    login/session ids entirely (the SDK raises AuthenticationError
+    before any HTTP call), and a login-session row that died server-side
+    makes the auth store answer the mint's session lookup with an
+    AccessDeniedError for sessions:read. Both are re-auth, not retry.
     """
-    return isinstance(err, CampusAPIError) and err.oauth_error == "invalid_grant"
+    if isinstance(err, CampusAPIError) and err.oauth_error == "invalid_grant":
+        return True
+    text = _error_text(err).lower()
+    if isinstance(err, AuthenticationError) and "login session id" in text:
+        return True
+    return isinstance(err, AccessDeniedError) and "sessions:read" in text
+
+
+def _error_text(err: BaseException) -> str:
+    """Message text that survives the SDK's arg conventions.
+
+    str(err) is empty when the message was passed into a non-standard
+    constructor slot; the traceback-visible args always carry it.
+    """
+    return str(err) or " ".join(str(a) for a in err.args)
 
 
 @contextmanager

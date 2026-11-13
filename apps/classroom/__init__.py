@@ -244,7 +244,12 @@ def create_app():
             try:
                 submission = client.api.submissions[submission_id].get()
             except Exception as e:
-                if "not found" in str(e).lower():
+                # "not found" covers the API's 404; 409/conflict covers a
+                # submission record deleted after its review chip was
+                # already attached in Classroom (#104 chips are add-only).
+                gone = ("not found" in str(e).lower()
+                        or getattr(e, "status_code", None) in (404, 409))
+                if gone:
                     flask.abort(404)
                 raise
 
