@@ -85,6 +85,11 @@ async function loadSubmission() {
             ` : ''}
         `;
 
+        // Render every document snapshot immediately — the frames are
+        // sandbox="" and the content was scrubbed at export, so there
+        // is nothing load-deferral protects against.
+        Object.keys(SNAPSHOT_HTML).forEach(loadSnapshot);
+
         document.getElementById('submission-loading').classList.add('d-none');
         document.getElementById('submission-container').classList.remove('d-none');
     } catch (error) {
@@ -154,12 +159,13 @@ function renderDocumentResponse(q, submission) {
     let snapshotBlock;
     if (html) {
         SNAPSHOT_HTML[q.id] = html;
+        // Rendered on load (details starts open): the snapshot is
+        // script-free and the frame is sandbox="" — auto-rendering is
+        // identical to the old button, minus two clicks.
         snapshotBlock = `
-            <details class="doc-snapshot mt-1">
-                <summary class="small text-muted">View the student's exported document
+            <details class="doc-snapshot mt-1" open>
+                <summary class="small text-muted">Student's exported document
                     (${Math.max(1, Math.round(html.length / 1024))} KB — script-free snapshot)</summary>
-                <button type="button" class="btn btn-sm btn-outline-secondary mt-2"
-                        onclick="loadSnapshot('${q.id}')">Render snapshot</button>
                 <div class="snapshot-frame-box mt-2" id="snapshot-${q.id}"></div>
             </details>`;
     } else {

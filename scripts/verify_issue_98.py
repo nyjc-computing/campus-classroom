@@ -453,9 +453,15 @@ check("deleted submission -> 404 (dead chip from a cleared record)",
 
 app.campus = ReviewFakeCampus(SUBMISSIONS)
 r = staff_browser.get("/submissions/sub-1")
+page = r.get_data(as_text=True)
 check("staff review of a live submission -> 200",
       r.status_code == 200,
-      f"status={r.status_code} body={r.get_data(as_text=True)[:160]!r}")
+      f"status={r.status_code} body={page[:160]!r}")
+check("snapshot renders on load (details open + auto-render, no button)",
+      'details class="doc-snapshot mt-1" open' in page
+      and "Object.keys(SNAPSHOT_HTML).forEach(loadSnapshot)" in page
+      and "Render snapshot" not in page,
+      "auto-render wiring missing from the rendered review page")
 
 # The dead-grant shapes must bounce the review page into /login too —
 # the exact path the 2026-11-13 staff 500s came from.
