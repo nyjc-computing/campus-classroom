@@ -187,9 +187,32 @@ def create_app():
     @login_manager.login_required
     def assignment_view(assignment_id: str, **_):
         """View/edit assignment page."""
+        # Document questions render live previews of their embedded app
+        # (#78): mint per-question embed URLs exactly like the student
+        # answer sheet does. The read uses the viewer's own Campus
+        # session — the same ACL the page's client fetch applies
+        # (assignment_submissions gates the same way). A dead Campus
+        # grant propagates to the app-wide re-auth redirect (#98).
+        embed_urls = {}
+        if documents.embed_origin():
+            with campus_session.user_session() as client:
+                try:
+                    assignment = client.api.assignments[assignment_id].get()
+                except Exception as e:
+                    if "not found" in str(e).lower():
+                        flask.abort(404)
+                    raise
+            for question in getattr(assignment, "questions", None) or []:
+                qid = documents.question_id(question)
+                if qid and documents.is_document(question):
+                    embed_urls[qid] = documents.embed_url_for(
+                        assignment_id, qid
+                    )
+
         return flask.render_template(
             "assignments/view.html",
             assignment_id=assignment_id,
+            embed_urls=embed_urls,
             profile_integrations_url=(
                 f"{cauth.profile_integrations_url()}/profile/integrations"
             ),

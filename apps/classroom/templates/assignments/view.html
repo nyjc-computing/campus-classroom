@@ -50,9 +50,14 @@
 
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
+<script src="{{ url_for('static', filename='js/doc-embed.js') }}"></script>
 <script>
 const assignmentId = {{ assignment_id | tojson }};
 const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
+// Per-question embed URLs for document questions (#78), minted
+// server-side like the student answer sheet; empty when the embed
+// origin is not configured (previews degrade to a notice).
+const EMBED_URLS = {{ embed_urls | tojson }};
 let assignment = null;
 let editing = false;
 
@@ -251,6 +256,39 @@ function renderQuestion(q) {
             <strong>${escapeHtml(q.id)}</strong> ${typeBadge}
             ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
             <p>${escapeHtml(q.question)}</p>
+            ${q.type === 'document' ? renderDocEmbed(q) : ''}
+        </div>
+    `;
+}
+
+// Live preview of the embedded app (#78): the same sandboxed frame the
+// student answers in (maximize/restore included, js/doc-embed.js) —
+// preview-only, no answer form, no export wiring.
+function renderDocEmbed(q) {
+    const url = EMBED_URLS[q.id];
+    if (!url) {
+        return `
+            <div class="alert alert-warning small mb-2">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Interactive content is not available right now — the
+                document service is not configured.
+            </div>`;
+    }
+    return `
+        <div class="doc-embed mb-2">
+            <div class="doc-embed-bar">
+                <span class="doc-embed-bar-label">
+                    <i class="bi bi-window-stack me-1"></i>Interactive document
+                </span>
+                <button type="button" class="doc-max-btn" aria-expanded="false">
+                    <i class="bi bi-arrows-fullscreen me-1"></i>Maximize
+                </button>
+            </div>
+            <iframe class="doc-frame" data-qid="${escapeHtml(q.id)}"
+                    src="${escapeHtml(url)}"
+                    sandbox="allow-scripts allow-same-origin"
+                    title="Interactive document ${escapeHtml(q.id)}"
+                    loading="lazy"></iframe>
         </div>
     `;
 }
