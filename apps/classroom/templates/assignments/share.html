@@ -70,6 +70,15 @@
                     {% set embed_url = embed_urls.get(q.id) %}
                     {% if embed_url %}
                     <div class="doc-embed mb-2">
+                        <div class="doc-embed-bar">
+                            <span class="doc-embed-bar-label">
+                                <i class="bi bi-window-stack me-1"></i>Interactive document
+                            </span>
+                            <button type="button" class="doc-max-btn"
+                                    aria-expanded="false">
+                                <i class="bi bi-arrows-fullscreen me-1"></i>Maximize
+                            </button>
+                        </div>
                         <iframe class="doc-frame" data-qid="{{ q.id }}"
                                 src="{{ embed_url }}"
                                 sandbox="allow-scripts allow-same-origin"
@@ -130,6 +139,53 @@
     border-radius: 0.375rem;
     background: #fff;
 }
+/* Maximize/restore: the maximized box overlays the viewport from the
+   top layer (Popover API — see setDocMax) on the same iframe element,
+   so in-document work survives the toggle; the bar keeps the Restore
+   control reachable. position:fixed alone is the fallback. */
+.doc-embed-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.doc-embed-bar-label { color: var(--bs-secondary-color); }
+.doc-max-btn {
+    border: 1px solid var(--border-color);
+    background: var(--bs-body-bg);
+    color: var(--bs-body-color);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    padding: 0.15rem 0.5rem;
+    white-space: nowrap;
+}
+.doc-max-btn:hover { background: var(--bs-tertiary-bg); }
+.doc-embed.doc-maximized {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    margin: 0;
+    padding: 0.75rem;
+    background: var(--bs-body-bg);
+    display: flex;
+    flex-direction: column;
+    /* Undo the UA popover defaults (fit-content sizing, dialog border)
+       so inset:0 actually stretches to the viewport; !important beats
+       the mb-2 utility on the same element. */
+    width: auto;
+    height: auto;
+    margin: 0 !important;
+    border: none;
+    overflow: hidden;
+    color: inherit;
+}
+.doc-embed.doc-maximized iframe {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+body.doc-max-open { overflow: hidden; }
 /* Students answer on phones: keep inputs at iOS-non-zooming size and
    make the action buttons full-width targets. */
 .share-page .answer-input { font-size: 1rem; }
@@ -299,6 +355,8 @@ function renderDocQuestions() {
     document.querySelectorAll('.doc-frame').forEach(frame => {
         const qid = frame.dataset.qid;
         const box = frame.closest('.doc-embed');
+        const bar = box.querySelector('.doc-embed-bar');
+        if (bar) bar.hidden = submitted;
         let chip = box.querySelector('.doc-state');
         if (!chip) {
             chip = document.createElement('div');
@@ -307,6 +365,7 @@ function renderDocQuestions() {
         }
         const saved = docResponseFor(qid);
         if (submitted) {
+            setDocMax(box, false);
             frame.hidden = true;
             chip.innerHTML = `
                 <i class="bi bi-check2-circle me-1 text-success"></i>
@@ -324,6 +383,58 @@ function renderDocQuestions() {
         }
     });
 }
+
+// --- document maximize/restore ------------------------------------------------
+// The maximized box is a fixed overlay around the same iframe element,
+// so the document inside keeps running across the toggle. One document
+// maximized at a time; Escape restores.
+
+function setDocMax(box, maximize) {
+    if (maximize) {
+        // Top layer (Popover API) first: the card's slide-in animation is
+        // a transform, and any transformed ancestor traps position:fixed,
+        // clipping the overlay to the card. The iframe is never
+        // re-parented, so in-document work survives; plain fixed is the
+        // fallback where the API is missing.
+        if (typeof box.showPopover === 'function') {
+            box.setAttribute('popover', 'manual');
+            try { box.showPopover(); } catch (e) { /* already shown */ }
+        }
+        box.classList.add('doc-maximized');
+    } else {
+        box.classList.remove('doc-maximized');
+        if (typeof box.hidePopover === 'function') {
+            try { box.hidePopover(); } catch (e) { /* not shown */ }
+            box.removeAttribute('popover');
+        }
+    }
+    document.body.classList.toggle(
+        'doc-max-open',
+        Boolean(document.querySelector('.doc-embed.doc-maximized')));
+    const btn = box.querySelector('.doc-max-btn');
+    if (btn) {
+        btn.setAttribute('aria-expanded', String(maximize));
+        btn.innerHTML = maximize
+            ? '<i class="bi bi-fullscreen-exit me-1"></i>Restore'
+            : '<i class="bi bi-arrows-fullscreen me-1"></i>Maximize';
+    }
+}
+
+document.addEventListener('click', event => {
+    const btn = event.target.closest('.doc-max-btn');
+    if (!btn) return;
+    const box = btn.closest('.doc-embed');
+    document.querySelectorAll('.doc-embed.doc-maximized').forEach(other => {
+        if (other !== box) setDocMax(other, false);
+    });
+    setDocMax(box, !box.classList.contains('doc-maximized'));
+});
+
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.doc-embed.doc-maximized')
+        .forEach(box => setDocMax(box, false));
+});
 
 async function exportDocumentAnswers() {
     const frames = [...document.querySelectorAll('.doc-frame:not([hidden])')];
