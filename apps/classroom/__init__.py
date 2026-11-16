@@ -224,6 +224,17 @@ def create_app():
             assignment_title=getattr(assignment, "title", assignment_id),
         )
 
+    # Submissions inbox (navbar resource page): every submission to an
+    # assignment the caller created, newest first. The rows are
+    # client-fetched from the owner-only by-assignment API, so a student
+    # (who owns no assignments) just sees the empty state — nothing can
+    # leak that the API would not already return them.
+    @app.get("/submissions")
+    @login_manager.login_required
+    def submissions_list(**_):
+        """List submissions across the caller's own assignments (staff)."""
+        return flask.render_template("submissions/list.html")
+
     # Submission UI routes
     @app.get("/submissions/<submission_id>")
     @login_manager.login_required
