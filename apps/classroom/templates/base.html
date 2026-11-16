@@ -23,15 +23,17 @@
                         <span>Campus Classroom</span>
                     </a>
                     {% if g.user %}
-                    <!-- Page nav (#105): the staff discovery path for the
-                        assignment surfaces; the user dropdown keeps account
-                        actions only. -->
+                    <!-- Page nav (#105): resource pages only — the navbar
+                        lists resources, not creation actions ("New
+                        assignment" was out of place here; its page-level
+                        buttons cover creation). The user dropdown keeps
+                        account actions only. -->
                     <ul class="navbar-nav flex-row gap-1 ms-3">
                         <li class="nav-item">
                             <a class="nav-link" href="{{ url_for('assignments_list') }}">Assignments</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{{ url_for('assignment_new') }}">New assignment</a>
+                            <a class="nav-link" href="{{ url_for('submissions_list') }}">Submissions</a>
                         </li>
                     </ul>
                     {% endif %}

@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Submissions - Campus Classroom{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">Submissions</h1>
+        <span class="text-muted">Across assignments created by you</span>
+    </div>
+
+    <div id="submissions-container">
+        <div class="text-center py-5">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading submissions...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script>
+// The signed-in user's id picks the assignments whose submissions are
+// reviewable (see loadSubmissions).
+const MY_ID = {{ g.user.id | tojson }};
+
+// Staff submissions inbox: every submission to an assignment the
+// caller created, newest first. There is no aggregate endpoint — the
+// dashboard (#105) already accepts the same one-fetch-per-own-
+// assignment N+1 as fine at staff scale; the noted later optimization
+// is an aggregate count/list endpoint on the Campus API.
+async function loadSubmissions() {
+    const container = document.getElementById('submissions-container');
+    try {
+        const assignments = await fetchJson('/api/v1/assignments');
+        const mine = assignments.filter((a) => a.created_by === MY_ID);
+
+        // One assignment failing (e.g. a deleted row) degrades to fewer
+        // rows, not a failed page.
+        const tagged = (await Promise.all(mine.map(async (assignment) => {
+            try {
+                const submissions = await fetchJson(
+                    `/api/v1/submissions/by-assignment/${encodeURIComponent(assignment.id)}`);
+                return submissions.map((s) => ({
+                    ...s,
+                    assignment_id: assignment.id,
+                    assignment_title: assignment.title,
+                }));
+            } catch (error) {
+                return [];
+            }
+        }))).flat();
+
+        // Turned-in work first (newest submission at the top), drafts
+        // after it, still newest-first by their last touch.
+        const touched = (s) => s.submitted_at || s.updated_at || s.created_at || '';
+        tagged.sort((a, b) => {
+            if (Boolean(a.submitted_at) !== Boolean(b.submitted_at)) {
+                return a.submitted_at ? -1 : 1;
+            }
+            return touched(b).localeCompare(touched(a));
+        });
+
+        if (tagged.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5">
+                    <h5 class="text-muted">No submissions yet</h5>
+                    <p class="text-muted">
+                        When students open the assignments you created and
+                        start working, their submissions will appear here.
+                    </p>
+                    <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-primary">
+                        Your assignments
+                    </a>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th scope="col">Assignment</th>
+                            <th scope="col">Student</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Responses</th>
+                            <th scope="col">Feedback</th>
+                            <th scope="col"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tagged.map(submissionRowHtml).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (error) {
+        if (error.expired) return;  // handleSessionExpiry is redirecting
+        console.error('Error loading submissions:', error);
+        container.innerHTML = `
+            <div class="alert alert-danger">Failed to load submissions. Please refresh the page.</div>
+        `;
+    }
+}
+
+async function fetchJson(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        // A dead Campus grant (#98) answers 401 here: re-auth is the
+        // only remedy, so redirect before any generic error UI.
+        const data = await response.json().catch(() => ({}));
+        const error = new Error(`Request failed (${response.status}): ${url}`);
+        error.expired = handleSessionExpiry(response, data);
+        throw error;
+    }
+    return response.json();
+}
+
+function submissionRowHtml(submission) {
+    const reviewUrl = `/submissions/${encodeURIComponent(submission.id)}`;
+    const status = submission.submitted_at
+        ? `Submitted at ${timestamp(submission.submitted_at)}`
+        : 'Draft';
+    return `
+        <tr>
+            <td>
+                <a href="/assignments/${encodeURIComponent(submission.assignment_id)}/submissions"
+                   class="text-decoration-none text-dark fw-semibold">${escapeHtml(submission.assignment_title)}</a>
+            </td>
+            <td class="text-break">${escapeHtml(submission.student_id)}</td>
+            <td class="text-nowrap">${escapeHtml(status)}</td>
+            <td>${submission.responses.length}</td>
+            <td>${submission.feedback.length}</td>
+            <td class="text-end">
+                <a href="${reviewUrl}" class="btn btn-sm btn-outline-primary">Review</a>
+            </td>
+        </tr>`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function timestamp(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-SG', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    });
+}
+
+// Load on page view
+loadSubmissions();
+</script>
+{% endblock %}
