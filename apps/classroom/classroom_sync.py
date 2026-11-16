@@ -28,6 +28,8 @@ then applies as usual (routes/assignments.py).
 
 from __future__ import annotations
 
+import base64
+
 import campus.common.utils.url as campus_url
 
 from . import classroom_auth as cauth
@@ -63,6 +65,21 @@ def _link_material(share_url: str, title: str) -> list[dict]:
     return [{"link": {"url": share_url, "title": title}}]
 
 
+def coursework_ui_link(course_id: str, coursework_id: str) -> str:
+    """Deep link to a coursework post in the Classroom web UI.
+
+    Classroom encodes its ids base64url in web-UI URLs (verified live
+    2026-11-16 against the CampusClass E2E draft: the /c/<course>/a/
+    <coursework> URL lands on the assignment's Instructions page). The
+    API's alternateLink is preferred when Google supplies one; this
+    constructs the same shape for when it does not.
+    """
+    def enc(value: str) -> str:
+        return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
+
+    return f"https://classroom.google.com/c/{enc(course_id)}/a/{enc(coursework_id)}"
+
+
 def send_assignment_to_classroom(
     campus_client,
     classroom: cauth.ClassroomClient,
@@ -82,20 +99,33 @@ def send_assignment_to_classroom(
 
     Returns:
         One outcome dict per requested course (deduplicated, order kept):
-        {course_id, status, coursework_id, attachment_id, message}.
+        {course_id, status, coursework_id, attachment_id, message,
+        coursework_url} — coursework_url deep-links the post in the
+        Classroom web UI whenever a coursework_id is known, so the
+        teacher can jump straight to the draft (still hidden from
+        students until they click Assign there).
     """
     origin = campus_url.canonical_origin()
-    linked_course_ids = {link.course_id for link in (assignment.classroom_links or [])}
+    links_by_course = {
+        link.course_id: link for link in (assignment.classroom_links or [])
+    }
+    linked_course_ids = set(links_by_course)
 
     outcomes: list[dict] = []
     for course_id in dict.fromkeys(course_ids):  # dedupe, keep order
         if course_id in linked_course_ids:
+            link = links_by_course[course_id]
+            coursework_id = getattr(link, "coursework_id", None)
             outcomes.append({
                 "course_id": course_id,
                 "status": STATUS_ALREADY_LINKED,
-                "coursework_id": None,
-                "attachment_id": None,
+                "coursework_id": coursework_id,
+                "attachment_id": getattr(link, "attachment_id", None),
                 "message": "This class already has this assignment posted.",
+                "coursework_url": (
+                    coursework_ui_link(course_id, coursework_id)
+                    if coursework_id else None
+                ),
             })
             continue
         # Per-course share URL: the pinned course tells the share page
@@ -141,6 +171,12 @@ def _send_to_course(
             "message": "Classroom did not return an assignment ID for the "
                        "created draft; nothing was linked.",
         }
+    # alternateLink (Classroom web UI) when Google provides it; the
+    # constructed deep link otherwise (same destination, verified live).
+    coursework_url = (
+        coursework.get("alternateLink")
+        or coursework_ui_link(course_id, coursework_id)
+    )
 
     attachment_id = None
     if eligible:
@@ -168,13 +204,13 @@ def _send_to_course(
             )
             return _persist_link(
                 campus_client, assignment, course_id, coursework_id,
-                None, STATUS_LINKED, message,
+                None, STATUS_LINKED, message, coursework_url,
             )
 
     status = STATUS_ATTACHED if attachment_id else STATUS_LINKED
     return _persist_link(
         campus_client, assignment, course_id, coursework_id,
-        attachment_id, status, base["message"],
+        attachment_id, status, base["message"], coursework_url,
     )
 
 
@@ -192,7 +228,7 @@ def _try_patch_link_material(
 
 
 def _persist_link(campus_client, assignment, course_id, coursework_id,
-                  attachment_id, status, message) -> dict:
+                  attachment_id, status, message, coursework_url) -> dict:
     """Store the ClassroomLink in Campus (GC-8) and shape the outcome."""
     try:
         campus_client.api.assignments[assignment.id].links.add(
@@ -209,6 +245,7 @@ def _persist_link(campus_client, assignment, course_id, coursework_id,
             "message": f"Classroom accepted the draft but Campus could not "
                        f"record the link ({err}); retry sending to this "
                        "class may create a duplicate draft.",
+            "coursework_url": coursework_url,
         }
     return {
         "course_id": course_id,
@@ -216,4 +253,5 @@ def _persist_link(campus_client, assignment, course_id, coursework_id,
         "coursework_id": coursework_id,
         "attachment_id": attachment_id,
         "message": message,
+        "coursework_url": coursework_url,
     }
