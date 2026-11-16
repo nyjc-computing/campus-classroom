@@ -455,6 +455,13 @@ function renderSendResults(results) {
                 <div class="small text-muted">
                     ${PICKER_LABELS[r.status] || r.status}${r.message ? ` — ${escapeHtml(r.message)}` : ''}
                 </div>
+                ${r.coursework_url ? `
+                    <div class="small">
+                        <a href="${escapeHtml(r.coursework_url)}" target="_blank" rel="noopener">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Open in Classroom
+                        </a>
+                        <span class="text-muted">— students see it only after you click Assign there.</span>
+                    </div>` : ''}
             </div>
         </div>
     `).join('');
