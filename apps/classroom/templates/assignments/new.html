@@ -8,7 +8,10 @@
         <div class="col-md-8">
             <h2 class="mb-4">Create New Assignment</h2>
 
-            <form id="assignment-form" class="needs-validation">
+            {# novalidate: JS validation owns the form (collectValidatedQuestions).
+               Native validation must not run — group cards carry a hidden empty
+               `required` textarea that would silently block submit (#123). #}
+            <form id="assignment-form" class="needs-validation" novalidate>
                 <div class="mb-3">
                     <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
                     <input type="text" class="form-control" id="title" name="title" required>
