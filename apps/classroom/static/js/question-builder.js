@@ -25,7 +25,9 @@ function recalculateAllIds() {
     });
 }
 
-// Set the tree's own question ID, then recurse into its subquestions
+// Set the tree's own question ID, then recurse into its subquestions.
+// Also syncs group mode: a card with subparts is a passage/group node —
+// its own question+type fields hide (they live in the subparts).
 function updateTreeIds(tree, id) {
     const card = tree.querySelector(':scope > .question-card');
     if (!card) return;
@@ -34,6 +36,11 @@ function updateTreeIds(tree, id) {
     card.dataset.level = id.split('.').length;
 
     const subquestions = card.nextElementSibling;
+    const hasSubparts = !!(subquestions
+        && subquestions.classList.contains('subquestions')
+        && subquestions.querySelector(':scope > .question-tree'));
+    card.classList.toggle('question-group', hasSubparts);
+
     if (subquestions && subquestions.classList.contains('subquestions')) {
         const childLevel = id.split('.').length + 1;
         subquestions.querySelectorAll(':scope > .question-tree').forEach((subTree, subIndex) => {
@@ -68,25 +75,30 @@ function createQuestionCard(level = 1) {
                 <label class="form-label small text-muted">Prompt (optional)</label>
                 <textarea class="form-control autosize question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
             </div>
-            <div class="mb-0">
-                <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
-                <textarea class="form-control autosize question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+            <div class="question-group-hint">
+                Passage/group — the answerable questions are the subparts below.
             </div>
-            <div class="mb-2 mt-2">
-                <label class="form-label small text-muted">Type</label>
-                <select class="form-select form-select-sm question-type" onchange="onQuestionTypeChange(this)">
-                    <option value="free-response">Free response</option>
-                    <option value="document">Interactive document</option>
-                </select>
-            </div>
-            <div class="question-doc-config d-none mb-0">
-                <label class="form-label small text-muted">Deployed app</label>
-                <select class="form-select form-select-sm question-doc-app"
-                        onchange="updateDocStatus(this)">
-                    <option value="">Loading deployed apps…</option>
-                </select>
-                <div class="form-text question-doc-status">Apps are uploaded on
-                    campus-apphost — pick one to embed it.</div>
+            <div class="question-leaf-fields">
+                <div class="mb-0">
+                    <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
+                    <textarea class="form-control autosize question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+                </div>
+                <div class="mb-2 mt-2">
+                    <label class="form-label small text-muted">Type</label>
+                    <select class="form-select form-select-sm question-type" onchange="onQuestionTypeChange(this)">
+                        <option value="free-response">Free response</option>
+                        <option value="document">Interactive document</option>
+                    </select>
+                </div>
+                <div class="question-doc-config d-none mb-0">
+                    <label class="form-label small text-muted">Deployed app</label>
+                    <select class="form-select form-select-sm question-doc-app"
+                            onchange="updateDocStatus(this)">
+                        <option value="">Loading deployed apps…</option>
+                    </select>
+                    <div class="form-text question-doc-status">Apps are uploaded on
+                        campus-apphost — pick one to embed it.</div>
+                </div>
             </div>
         </div>
     `;
@@ -158,6 +170,13 @@ function onQuestionTypeChange(select) {
     const isDocument = select.value === 'document';
     card.querySelector('.question-doc-config').classList.toggle('d-none', !isDocument);
     if (isDocument) {
+        // When the apps list is already loaded, populate this card's
+        // picker right away — ensureAppsLoaded's one-shot chain has run
+        // and would never refresh a select created later (late-added
+        // document questions, demoted subparts, edit-mode populate).
+        if (window.CAMPUS_APPS) {
+            populateAppSelect(card.querySelector('.question-doc-app'));
+        }
         ensureAppsLoaded().catch(error => {
             const status = card.querySelector('.question-doc-status');
             if (status) status.textContent = error.message;
@@ -190,6 +209,36 @@ function addTopLevelQuestion() {
     recalculateAllIds();
 }
 
+// A parent with subparts is a passage/group node: its own question+type
+// moves into a new FIRST subpart, so every answerable question lives at
+// leaf level (adding a subpart to "q1" makes its content q1.a and the
+// fresh subpart q1.b). No-op for an empty free-response card.
+function demoteCardContent(card, subquestions, level) {
+    const questionText = card.querySelector('.question-text').value;
+    const typeId = card.querySelector('.question-type').value;
+    if (!questionText.trim() && typeId !== 'document') return;
+
+    const demotedTree = document.createElement('div');
+    demotedTree.className = 'question-tree';
+    demotedTree.innerHTML = createQuestionCard(level);
+    const demotedCard = demotedTree.querySelector('.question-card');
+    demotedCard.querySelector('.question-text').value = questionText;
+    // setQuestionType first: it populates the app picker once the apps
+    // list is loaded, so the slug below lands on real options.
+    setQuestionType(demotedCard, typeId);
+    if (typeId === 'document') {
+        const slugSelect = demotedCard.querySelector('.question-doc-app');
+        slugSelect.value = card.querySelector('.question-doc-app').value;
+        slugSelect.dataset.appSlug = slugSelect.value;
+        updateDocStatus(slugSelect);
+    }
+
+    card.querySelector('.question-text').value = '';
+    card.querySelector('.question-type').value = 'free-response';
+    subquestions.insertBefore(demotedTree, subquestions.firstChild);
+    setupDragAndDrop(demotedCard);
+}
+
 // Add subpart to existing question
 function addSubpart(button) {
     const card = button.closest('.question-card');
@@ -202,6 +251,8 @@ function addSubpart(button) {
     }
 
     const newLevel = parseInt(card.dataset.level || 1) + 1;
+    demoteCardContent(card, subquestions, newLevel);
+
     const tree = document.createElement('div');
     tree.className = 'question-tree';
     tree.innerHTML = createQuestionCard(newLevel);
@@ -368,13 +419,16 @@ function handleDrop(e) {
         // Reorder: take over the target's spot (whole group moves together)
         targetTree.before(sourceTree);
     } else if (sourceDepth < targetDepth) {
-        // Demote: become the last subpart of the target
+        // Demote: become the last subpart of the target — and when the
+        // target still holds its own question+type, that content
+        // demotes into the first subpart (groups are passage nodes).
         let subquestions = targetCard.nextElementSibling;
         if (!subquestions || !subquestions.classList.contains('subquestions')) {
             subquestions = document.createElement('div');
             subquestions.className = 'subquestions';
             targetCard.after(subquestions);
         }
+        demoteCardContent(targetCard, subquestions, targetDepth + 1);
         subquestions.appendChild(sourceTree);
     } else {
         // Promote: follow the target as a sibling at the target's level
@@ -413,19 +467,25 @@ function collectQuestions(container) {
         const questionText = card.querySelector('.question-text').value.trim();
         const typeId = card.querySelector('.question-type').value;
 
+        const subquestions = card.nextElementSibling;
+        const isGroup = !!(subquestions
+            && subquestions.classList.contains('subquestions')
+            && subquestions.querySelectorAll(':scope > .question-tree').length > 0);
+
+        // Group nodes carry only the passage; the answerable question+
+        // type pairs live in their subparts.
         const question = {
             id: badge.textContent,
             prompt: prompt,
-            question: questionText
+            question: isGroup ? '' : questionText
         };
-        if (typeId === 'document') {
+        if (!isGroup && typeId === 'document') {
             question.type = typeId;
             question.data = { slug: card.querySelector('.question-doc-app').value };
         }
 
         // Collect subquestions
-        const subquestions = card.nextElementSibling;
-        if (subquestions && subquestions.classList.contains('subquestions')) {
+        if (isGroup) {
             const subQuestions = collectQuestions(subquestions);
             if (subQuestions.length > 0) {
                 question.subquestions = subQuestions;
@@ -473,7 +533,12 @@ function collectValidatedQuestions() {
         return null;
     }
 
-    const incomplete = questions.find(q => !q.question);
+    // Only leaf questions carry answerable text — group nodes (parents
+    // of dotted children) hold just the passage.
+    const parents = new Set(questions
+        .filter(q => q.id.includes('.'))
+        .map(q => q.id.slice(0, q.id.lastIndexOf('.'))));
+    const incomplete = questions.find(q => !q.question && !parents.has(q.id));
     if (incomplete) {
         alert(`Question ${incomplete.id} is missing its question text.`);
         return null;

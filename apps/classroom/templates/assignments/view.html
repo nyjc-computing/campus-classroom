@@ -132,7 +132,7 @@ function renderViewMode() {
 
                 <hr>
 
-                <h5 class="mb-3">Questions (${assignment.questions.length})</h5>
+                <h5 class="mb-3">Questions (${assignment.questions.filter(q => q.question).length})</h5>
 
                 <div class="questions-list mb-4">
                     ${assignment.questions.map(q => renderQuestion(q)).join('')}
@@ -255,7 +255,7 @@ function renderQuestion(q) {
         <div class="question-item mb-3 p-3" style="margin-left: ${indent}px">
             <strong>${escapeHtml(q.id)}</strong> ${typeBadge}
             ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
-            <p class="text-verbatim">${escapeHtml(q.question)}</p>
+            ${q.question ? `<p class="text-verbatim">${escapeHtml(q.question)}</p>` : ''}
             ${q.type === 'document' ? renderDocEmbed(q) : ''}
         </div>
     `;

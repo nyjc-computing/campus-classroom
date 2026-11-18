@@ -137,6 +137,24 @@ main {
     padding-left: 1rem;
 }
 
+/* Group mode (updateTreeIds): a question that has subparts is a
+   passage/group node — its own question+type fields hide (adding the
+   subpart demoted them into the first subpart) and a hint explains
+   the card's role. */
+.question-card.question-group .question-leaf-fields {
+    display: none;
+}
+
+.question-group-hint {
+    display: none;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.question-card.question-group .question-group-hint {
+    display: block;
+}
+
 .subquestions .question-card {
     background: #fafafa;
 }

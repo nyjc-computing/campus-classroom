@@ -107,7 +107,23 @@ async function loadSubmission() {
 // script-disabled iframe only on demand.
 const SNAPSHOT_HTML = {};
 
+// Group nodes (passage-only parents — no question text) hold no
+// answers: render id + prompt only, no response box, no feedback.
+function renderGroupNode(q) {
+    const level = q.id.split('.').length;
+    const indent = (level - 1) * 24;
+    return `
+        <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
+            <strong>${escapeHtml(q.id)}</strong>
+            ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+        </div>
+    `;
+}
+
 function renderQuestionWithResponse(q, submission) {
+    if (!q.question) {
+        return renderGroupNode(q);
+    }
     if ((q.type || 'free-response') === 'document') {
         return renderDocumentResponse(q, submission);
     }

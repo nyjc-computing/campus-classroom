@@ -119,7 +119,7 @@
                         <div class="card-body">
                             <h5 class="card-title">${escapeHtml(assignment.title)}</h5>
                             ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
-                            <p><strong>Questions:</strong> ${assignment.questions.length}</p>
+                            <p><strong>Questions:</strong> ${assignment.questions.filter(q => q.question).length}</p>
                         </div>
                     </div>
                 `;
