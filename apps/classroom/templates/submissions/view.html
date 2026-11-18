@@ -19,12 +19,21 @@
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
 const submissionId = {{ submission_id | tojson }};
-// Read-only review (#104): the owning student views their own submission
-// here (they arrive from the review-link chip in Classroom) — no
-// editing, no auto-save, no submit. The owner keeps the full view.
-// Grades stay Classroom-native: no grade fields render on this page
-// for anyone — teacher grading happens in Classroom itself.
+// Read-only for every viewer (#104, #130): the owning student (arriving
+// from the review-link chip in Classroom), the creator, and co-tutors —
+// the response/submit verbs behind the old editable affordances are
+// student-only and 403 anyone else; owners edit on /a/<id>. Grades stay
+// Classroom-native: no grade fields render on this page for anyone —
+// teacher grading happens in Classroom itself.
 const readOnly = {{ read_only | tojson }};
+// Assignment details render server-side (#130): this page is
+// reviewer-gated (creator or co-tutor, or the owning student), while
+// GET /api/v1/assignments/<id> stays creator-only — so the route passes
+// the title and questions down instead of a client fetch.
+const assignment = {
+    title: {{ assignment_title | tojson }},
+    questions: {{ assignment_questions | tojson }},
+};
 
 async function loadSubmission() {
     try {
@@ -39,16 +48,6 @@ async function loadSubmission() {
 
         const submission = await response.json();
         const container = document.getElementById('submission-container');
-
-        // Also load assignment details for questions
-        const assignmentResp = await fetch(`/api/v1/assignments/${submission.assignment_id}`);
-        if (!assignmentResp.ok) {
-            const data = await assignmentResp.json().catch(() => ({}));
-            if (handleSessionExpiry(assignmentResp, data)) return;
-            throw new Error('Failed to load assignment');
-        }
-
-        const assignment = await assignmentResp.json();
 
         container.innerHTML = `
             <nav aria-label="breadcrumb" class="mb-4">

@@ -6,7 +6,7 @@
 <div class="container-md mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="h3 mb-0">Submissions</h1>
-        <span class="text-muted">Across assignments created by you</span>
+        <span class="text-muted">Across assignments you created or teach</span>
     </div>
 
     <div id="submissions-container">
@@ -23,20 +23,32 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
-// The signed-in user's id picks the assignments whose submissions are
-// reviewable (see loadSubmissions).
+// The signed-in user's id and taught-course set pick the assignments
+// whose submissions are reviewable (see loadSubmissions). The taught set
+// is resolved server-side; a Classroom-bridge failure degrades it to
+// empty (own assignments only) — the rule-4 listing contract.
 const MY_ID = {{ g.user.id | tojson }};
+const TAUGHT_COURSE_IDS = new Set({{ taught_course_ids | tojson }});
 
-// Staff submissions inbox: every submission to an assignment the
-// caller created, newest first. There is no aggregate endpoint — the
-// dashboard (#105) already accepts the same one-fetch-per-own-
-// assignment N+1 as fine at staff scale; the noted later optimization
-// is an aggregate count/list endpoint on the Campus API.
+// Reviewable (#130, mirroring Classroom's submission contract): own
+// assignments, plus any linked to a course the caller teaches. Course
+// students see only their own submission — the by-assignment API gates
+// the same way, so an over-eager row fetch would just 404 into the
+// "fewer rows" degradation below.
+const isReviewable = (a) => a.created_by === MY_ID
+    || (a.classroom_links || []).some(
+        (link) => TAUGHT_COURSE_IDS.has(link.course_id));
+
+// Staff submissions inbox: every submission to a reviewable assignment,
+// newest first. There is no aggregate endpoint — the dashboard (#105)
+// already accepts the same one-fetch-per-assignment N+1 as fine at
+// staff scale; the noted later optimization is an aggregate count/list
+// endpoint on the Campus API.
 async function loadSubmissions() {
     const container = document.getElementById('submissions-container');
     try {
         const assignments = await fetchJson('/api/v1/assignments');
-        const mine = assignments.filter((a) => a.created_by === MY_ID);
+        const mine = assignments.filter(isReviewable);
 
         // One assignment failing (e.g. a deleted row) degrades to fewer
         // rows, not a failed page.
@@ -69,8 +81,9 @@ async function loadSubmissions() {
                 <div class="text-center py-5">
                     <h5 class="text-muted">No submissions yet</h5>
                     <p class="text-muted">
-                        When students open the assignments you created and
-                        start working, their submissions will appear here.
+                        When students open the assignments you created or
+                        teach and start working, their submissions will
+                        appear here.
                     </p>
                     <a href="{{ url_for('assignments_list') }}" class="btn btn-outline-primary">
                         Your assignments
