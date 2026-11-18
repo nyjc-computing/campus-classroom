@@ -25,9 +25,11 @@ separate services.
 ## Flow
 
 1. Publishers **deploy** single-file HTML apps on campus-apphost
-   (`/apps/publish` — the `/apps/` landing page links it, Campus login
-   via flask_campus; any signed-in user in dev, deploy is
-   immediate, campus audit captures the action). Each app lands in the
+   (`/apps/add` upload form — the `/apps/` landing page links it,
+   Campus login via flask_campus; any signed-in user in dev, deploy is
+   immediate, campus audit captures the action; `/apps/myapps` lists
+   the publisher's own apps, `/apps/new` is a not-yet-implemented
+   in-browser authoring stub). Each app lands in the
    **campus.api hostedapps registry** (campus#1066): bytes
    CONTENT-ADDRESSED in the `hostedapps` bucket under the content's
    sha256, metadata in the `hostedapps` collection with publisher

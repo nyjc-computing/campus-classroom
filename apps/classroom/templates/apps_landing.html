@@ -13,12 +13,17 @@
         </p>
 
         {% if g.user %}
-        <a class="btn btn-primary btn-lg" href="{{ url_for('publish_apps') }}">
-            <i class="bi bi-cloud-upload me-2"></i>Deploy an app
-        </a>
+        <div class="d-flex gap-2 justify-content-center">
+            <a class="btn btn-primary btn-lg" href="{{ url_for('apps_add') }}">
+                <i class="bi bi-cloud-upload me-2"></i>Add an app
+            </a>
+            <a class="btn btn-outline-primary btn-lg" href="{{ url_for('apps_myapps') }}">
+                <i class="bi bi-collection me-2"></i>My apps
+            </a>
+        </div>
         {% else %}
-        <a class="btn btn-primary btn-lg" href="/login?next=%2Fapps%2Fpublish">
-            <i class="bi bi-box-arrow-in-right me-2"></i>Sign in to deploy an app
+        <a class="btn btn-primary btn-lg" href="/login?next=%2Fapps%2Fadd">
+            <i class="bi bi-box-arrow-in-right me-2"></i>Sign in to add an app
         </a>
         {% endif %}
     </div>

@@ -642,10 +642,18 @@ os.environ["EMBED_MODE"] = "1"
 os.environ["EMBED_PARENT_ORIGIN"] = "http://localhost:5000"
 
 # Publisher surface carve-out (#81): the apphost deployment serves the
-# publisher UI and the apps API alongside /apps/embed.
-resp = student_client.get("/apps/publish")
-check("publisher page renders on apphost for a signed-in user",
-      resp.status_code == 200 and "Deploy an app" in resp.get_data(as_text=True),
+# /apps/ pages and the apps API alongside /apps/embed.
+resp = student_client.get("/apps/add")
+check("add page renders on apphost for a signed-in user",
+      resp.status_code == 200 and "Add an app" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
+resp = student_client.get("/apps/new")
+check("new-app page is a not-implemented stub on apphost",
+      resp.status_code == 200 and "isn't available yet" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
+resp = student_client.get("/apps/myapps")
+check("my apps starts empty for the student (seed app is the teacher's)",
+      resp.status_code == 200 and "No apps yet" in resp.get_data(as_text=True),
       f"status={resp.status_code}")
 CALLS.clear()
 resp = student_client.get("/api/v1/apps")
@@ -743,6 +751,14 @@ check("re-publishing the same slug replaces in place (200, replaced)",
       resp.status_code == 200 and resp.get_json()["replaced"] is True
       and resp.get_json()["name"] == "Probe Two"
       and "second app v2" in HOSTEDAPPS_STORE["probe-two"]["content"],
+      f"status={resp.status_code}")
+
+resp = student_client.get("/apps/myapps")
+body = resp.get_data(as_text=True)
+check("my apps shows the student's app and not the teacher's",
+      resp.status_code == 200
+      and "<code>probe-two</code>" in body
+      and "<code>probe</code>" not in body,
       f"status={resp.status_code}")
 
 resp = student_client.post("/api/v1/apps", json={
