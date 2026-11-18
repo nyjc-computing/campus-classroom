@@ -20,7 +20,7 @@ Covers:
    pointing at the docs deployment (never the doc HTML inline); with
    EMBED_ORIGIN unset it degrades to a notice; unsupported types render
    a notice instead of a wrong input.
-5. /embed: 404 without EMBED_MODE=1; token-gated 200 with the injected
+5. /apps/embed: 404 without EMBED_MODE=1; token-gated 200 with the injected
    export runtime and a main-origin-only CSP; 403 on a bad token.
 
 Usage: .venv/Scripts/python.exe scripts/verify_issue_62.py
@@ -602,10 +602,10 @@ resp = student_client.get(f"/a/{ASSIGNMENT_ID}")
 page = resp.get_data(as_text=True)
 check("document question renders an iframe to the docs deployment",
       resp.status_code == 200
-      and f'src="{DOCS_ORIGIN}/embed/{ASSIGNMENT_ID}/q1?t=' in page,
+      and f'src="{DOCS_ORIGIN}/apps/embed/{ASSIGNMENT_ID}/q1?t=' in page,
       f"status={resp.status_code}")
 check("slug-referencing question renders its own embed iframe",
-      f'/embed/{ASSIGNMENT_ID}/q3?t=' in page)
+      f'/apps/embed/{ASSIGNMENT_ID}/q3?t=' in page)
 check("the iframe is sandboxed allow-scripts allow-same-origin",
       'sandbox="allow-scripts allow-same-origin"' in page)
 check("doc HTML is never inlined into the page", "alert(1)" not in page)
@@ -617,7 +617,7 @@ resp = student_client.get(f"/a/{ASSIGNMENT_ID}")
 page = resp.get_data(as_text=True)
 check("without EMBED_ORIGIN the doc question degrades to a notice",
       resp.status_code == 200 and "not configured" in page
-      and "/embed/" not in page)
+      and "/apps/embed/" not in page)
 
 # Unsupported type rendering (campus may know more than this app does).
 ASSIGNMENTS[ASSIGNMENT_ID].questions.append(
@@ -631,21 +631,29 @@ ASSIGNMENTS[ASSIGNMENT_ID].questions.pop()
 os.environ["EMBED_ORIGIN"] = DOCS_ORIGIN
 
 # ---------------------------------------------------------------------------
-# Part 5 — /embed on the docs deployment
+# Part 5 — /apps/embed on the docs deployment
 # ---------------------------------------------------------------------------
 
-resp = student_client.get(f"/embed/{ASSIGNMENT_ID}/q1")
-check("/embed 404s without EMBED_MODE on this deployment",
+resp = student_client.get(f"/apps/embed/{ASSIGNMENT_ID}/q1")
+check("/apps/embed 404s without EMBED_MODE on this deployment",
       resp.status_code == 404, f"status={resp.status_code}")
 
 os.environ["EMBED_MODE"] = "1"
 os.environ["EMBED_PARENT_ORIGIN"] = "http://localhost:5000"
 
 # Publisher surface carve-out (#81): the apphost deployment serves the
-# publisher UI and the apps API alongside /embed.
-resp = student_client.get("/publish")
-check("publisher page renders on apphost for a signed-in user",
-      resp.status_code == 200 and "Deploy an app" in resp.get_data(as_text=True),
+# /apps/ pages and the apps API alongside /apps/embed.
+resp = student_client.get("/apps/add")
+check("add page renders on apphost for a signed-in user",
+      resp.status_code == 200 and "Add an app" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
+resp = student_client.get("/apps/new")
+check("new-app page is a not-implemented stub on apphost",
+      resp.status_code == 200 and "isn't available yet" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
+resp = student_client.get("/apps/myapps")
+check("my apps starts empty for the student (seed app is the teacher's)",
+      resp.status_code == 200 and "No apps yet" in resp.get_data(as_text=True),
       f"status={resp.status_code}")
 CALLS.clear()
 resp = student_client.get("/api/v1/apps")
@@ -656,22 +664,30 @@ check("apps API lists the hostedapps registry",
       and ("hostedapps.list",) in CALLS,
       f"status={resp.status_code} {listing}")
 
-# campus-apphost containment (#81): EMBED_MODE deployments serve
-# /embed and nothing else — no login, no API, no share pages.
-check("apphost mode refuses every non-embed route",
-      student_client.get("/").status_code == 404
-      and student_client.get(f"/a/{ASSIGNMENT_ID}").status_code == 404
+# campus-apphost containment (#81): EMBED_MODE deployments serve the
+# /apps/ surface and nothing else — no Classroom pages, no general API.
+check("apphost mode refuses every non-apps route",
+      student_client.get(f"/a/{ASSIGNMENT_ID}").status_code == 404
       and student_client.get("/api/v1/assignments").status_code == 404
       and student_client.get("/sign-in").status_code == 404,
-      "GET / /a/{id} /api/v1/assignments /sign-in")
+      "GET /a/{id} /api/v1/assignments /sign-in")
+resp = student_client.get("/")
+check("apphost mode redirects / into the landing page",
+      resp.status_code == 302
+      and resp.headers["Location"].endswith("/apps/"),
+      f"status={resp.status_code} location={resp.headers.get('Location')}")
+resp = student_client.get("/apps/")
+check("landing page renders on apphost",
+      resp.status_code == 200 and "Campus Apps" in resp.get_data(as_text=True),
+      f"status={resp.status_code}")
 
-resp = student_client.get(f"/embed/{ASSIGNMENT_ID}/q1")
-check("/embed 403s without a token", resp.status_code == 403,
+resp = student_client.get(f"/apps/embed/{ASSIGNMENT_ID}/q1")
+check("/apps/embed 403s without a token", resp.status_code == 403,
       f"status={resp.status_code}")
 
 good_token = documents.mint_embed_token(ASSIGNMENT_ID, "q1")
 resp = student_client.get(
-    f"/embed/{ASSIGNMENT_ID}/q1?t={good_token}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q1?t={good_token}")
 body = resp.get_data(as_text=True)
 check("valid token serves the document",
       resp.status_code == 200 and "<h1>Explore</h1>" in body,
@@ -687,13 +703,15 @@ check("runtime scripts are the only additions (page CSP frame-ancestors)",
       resp.headers.get("Content-Security-Policy", ""))
 
 resp = student_client.get(
-    f"/embed/{ASSIGNMENT_ID}/q1?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q2')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q1?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q2')}")
 check("a token for another question 403s", resp.status_code == 403,
       f"status={resp.status_code}")
 
 CALLS.clear()
 resp = student_client.get(
-    f"/embed/{ASSIGNMENT_ID}/q3?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q3')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q3?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q3')}")
 body = resp.get_data(as_text=True)
 check("slug-referencing question serves the registry app's current bytes",
       resp.status_code == 200 and "registry-app-marker" in body
@@ -702,7 +720,8 @@ check("slug-referencing question serves the registry app's current bytes",
       f"status={resp.status_code}")
 
 resp = student_client.get(
-    f"/embed/{ASSIGNMENT_ID}/q4?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q4')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q4?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q4')}")
 check("a slug whose file is gone answers 404",
       resp.status_code == 404, f"status={resp.status_code}")
 
@@ -734,6 +753,14 @@ check("re-publishing the same slug replaces in place (200, replaced)",
       and "second app v2" in HOSTEDAPPS_STORE["probe-two"]["content"],
       f"status={resp.status_code}")
 
+resp = student_client.get("/apps/myapps")
+body = resp.get_data(as_text=True)
+check("my apps shows the student's app and not the teacher's",
+      resp.status_code == 200
+      and "<code>probe-two</code>" in body
+      and "<code>probe</code>" not in body,
+      f"status={resp.status_code}")
+
 resp = student_client.post("/api/v1/apps", json={
     "name": "!!!", "html": "<html></html>"})
 check("an unusable name answers 400",
@@ -745,7 +772,7 @@ check("an oversize app answers 400",
       resp.status_code == 400, f"status={resp.status_code}")
 
 ghost_token = documents.mint_embed_token(ASSIGNMENT_ID, "q_ghost")
-resp = student_client.get(f"/embed/{ASSIGNMENT_ID}/q_ghost?t={ghost_token}")
+resp = student_client.get(f"/apps/embed/{ASSIGNMENT_ID}/q_ghost?t={ghost_token}")
 check("a valid token for an unknown question 404s",
       resp.status_code == 404, f"status={resp.status_code}")
 

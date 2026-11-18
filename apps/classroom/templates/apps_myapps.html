@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}My apps{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4 mt-md-5">
+    <div class="d-flex justify-content-between align-items-start mb-1">
+        <h2><i class="bi bi-collection me-2"></i>My apps</h2>
+        <a class="btn btn-primary" href="{{ url_for('apps_add') }}">
+            <i class="bi bi-cloud-upload me-1"></i>Add an app
+        </a>
+    </div>
+    <p class="text-muted">
+        Single-file HTML apps you deployed. Apps appear in the
+        document-question picker when teachers create assignments;
+        re-deploying an existing slug replaces it in place.
+    </p>
+
+    {% if deployed %}
+    <div class="alert alert-success mb-3">
+        <i class="bi bi-check-circle-fill me-1"></i>
+        Deployed <code>{{ deployed }}</code>. Teachers can now embed it in an
+        assignment; once the assignment is sent to Classroom, the app is
+        assigned.
+    </div>
+    {% endif %}
+
+    {% if apps %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+            <tr>
+                <th>Slug</th>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Updated</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for app in apps %}
+            {% set size_kb = ((app.size / 1024) | round(0, 'ceil') | int) %}
+            <tr>
+                <td><code>{{ app.slug }}</code></td>
+                <td>{{ app.name or app.slug }}</td>
+                <td>{{ size_kb }} KB</td>
+                <td>{{ app.updated_at | timestamp }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+        <p class="fs-5 mb-1">No apps yet.</p>
+        <p>Upload a single-file HTML app to get started —
+           <a href="{{ url_for('apps_add') }}">add one now</a>.</p>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

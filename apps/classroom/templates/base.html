@@ -18,11 +18,27 @@
         <nav class="navbar navbar-light bg-white border-bottom">
             <div class="container-fluid px-4">
                 <div class="d-flex align-items-center">
-                    <a class="navbar-brand mb-0 d-flex align-items-center gap-2" href="/">
+                    <a class="navbar-brand mb-0 d-flex align-items-center gap-2" href="{% if embed_mode %}/apps/{% else %}/{% endif %}">
+                        {% if embed_mode %}
+                        <i class="bi bi-boxes text-primary"></i>
+                        <span>Campus Apps</span>
+                        {% else %}
                         <i class="bi bi-mortarboard-fill text-primary"></i>
                         <span>Campus Classroom</span>
+                        {% endif %}
                     </a>
-                    {% if g.user %}
+                    {% if g.user and embed_mode %}
+                    <!-- Apphost nav (#81): the /apps/ surface's own pages —
+                        the Classroom routes are gated 404 on this deploy. -->
+                    <ul class="navbar-nav flex-row gap-1 ms-3">
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('apps_myapps') }}">My apps</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('apps_add') }}">Add app</a>
+                        </li>
+                    </ul>
+                    {% elif g.user %}
                     <!-- Page nav (#105): resource pages only — the navbar
                         lists resources, not creation actions ("New
                         assignment" was out of place here; its page-level
@@ -46,14 +62,16 @@
                             <i class="bi bi-person-circle fs-5"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
+                            {% if not embed_mode %}
                             <li><a class="dropdown-item" href="/dashboard">Dashboard</a></li>
                             <li><hr class="dropdown-divider"></li>
+                            {% endif %}
                             <li><a class="dropdown-item" href="/logout">Log Out</a></li>
                         </ul>
                     </div>
                 </div>
                 {% else %}
-                <a class="btn btn-sm btn-outline-primary" href="/sign-in">Sign In</a>
+                <a class="btn btn-sm btn-outline-primary" href="{% if embed_mode %}/login?next=%2Fapps%2Fpublish{% else %}/sign-in{% endif %}">Sign In</a>
                 {% endif %}
             </div>
         </nav>

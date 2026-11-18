@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Create a new app{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4 mt-md-5">
+    <div class="text-center py-5">
+        <h2><i class="bi bi-code-square me-2"></i>Create a new app</h2>
+        <p class="lead text-muted mx-auto mt-3" style="max-width: 36rem;">
+            Building an app right in the browser isn't available yet. For
+            now, create your single-file HTML app anywhere you like and
+            upload it on the Add an app page.
+        </p>
+        <a class="btn btn-primary mt-2" href="{{ url_for('apps_add') }}">
+            <i class="bi bi-cloud-upload me-1"></i>Add an app
+        </a>
+    </div>
+</div>
+{% endblock %}

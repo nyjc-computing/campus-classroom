@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Campus Apps{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4 mt-md-5">
+    <div class="text-center py-4">
+        <h1 class="display-6 mb-3"><i class="bi bi-boxes text-primary me-2"></i>Campus Apps</h1>
+        <p class="lead text-muted mb-4 mx-auto" style="max-width: 42rem;">
+            Host single-page HTML apps for Campus Classroom. Upload a
+            self-contained <code>.html</code> file here and teachers can embed
+            it as an interactive document question in their assignments.
+        </p>
+
+        {% if g.user %}
+        <div class="d-flex gap-2 justify-content-center">
+            <a class="btn btn-primary btn-lg" href="{{ url_for('apps_add') }}">
+                <i class="bi bi-cloud-upload me-2"></i>Add an app
+            </a>
+            <a class="btn btn-outline-primary btn-lg" href="{{ url_for('apps_myapps') }}">
+                <i class="bi bi-collection me-2"></i>My apps
+            </a>
+        </div>
+        {% else %}
+        <a class="btn btn-primary btn-lg" href="/login?next=%2Fapps%2Fadd">
+            <i class="bi bi-box-arrow-in-right me-2"></i>Sign in to add an app
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="row justify-content-center text-center mt-4 mb-5 g-4">
+        <div class="col-md-4">
+            <div class="card h-100 border-0 bg-light">
+                <div class="card-body">
+                    <div class="fs-3 mb-2"><i class="bi bi-cloud-upload"></i></div>
+                    <h6 class="card-title">1 · Deploy</h6>
+                    <p class="card-text text-muted small mb-0">
+                        Sign in with Campus and upload a single-file HTML app
+                        (≤ 2 MB) under a slug of your choosing.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 border-0 bg-light">
+                <div class="card-body">
+                    <div class="fs-3 mb-2"><i class="bi bi-mortarboard"></i></div>
+                    <h6 class="card-title">2 · Embed</h6>
+                    <p class="card-text text-muted small mb-0">
+                        Deployed apps appear in the document-question picker
+                        when teachers build assignments in Campus Classroom.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100 border-0 bg-light">
+                <div class="card-body">
+                    <div class="fs-3 mb-2"><i class="bi bi-people"></i></div>
+                    <h6 class="card-title">3 · Assign</h6>
+                    <p class="card-text text-muted small mb-0">
+                        Students work inside the app on the answer sheet and
+                        its exported state comes back with the submission.
+                        Re-deploying a slug updates every assignment live.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

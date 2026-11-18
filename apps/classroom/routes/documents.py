@@ -1,16 +1,21 @@
 """campus.apps.classroom.routes.documents
 
 Document-question routes (#62/#78): export challenges for the answer
-sheet, and the embed origin's document serving.
+sheet, the apphost publisher surface, and the embed origin's document
+serving.
 
 /export-challenge lives on the main app: the student's /a/ page calls it
 immediately before asking the embedded document to serialize itself, so
 every accepted snapshot carries a fresh server-minted nonce.
 
-/embed lives only on the docs deployment: EMBED_MODE=1 gates it, so the
-main origin never serves executable teacher HTML (#78). Embed requests
-carry no Campus session cookie (different origin), so auth is the
-short-lived HMAC token the share page minted into the iframe URL.
+The campus-apphost browser surface lives under /apps/: /apps/ is the
+public landing page, /apps/add the upload form, /apps/myapps the
+signed-in publisher's own apps, /apps/new a not-yet-implemented
+in-browser authoring stub, and /apps/embed/<a>/<q> the document-
+serving route — all gated to EMBED_MODE=1 so the main origin never
+serves executable teacher HTML (#78). Embed requests carry no Campus
+session cookie (different origin), so auth is the short-lived HMAC
+token the share page minted into the iframe URL.
 """
 
 import flask
@@ -70,28 +75,72 @@ def register_routes(app: flask.Flask, login_manager):
         nonce, expires_at = documents.mint_export_nonce(assignment_id, question_id)
         return flask.jsonify({"nonce": nonce, "expires_at": expires_at})
 
-    @app.get("/publish")
+    @app.get("/apps/")
+    def apps_landing():
+        """campus-apphost landing page (#81): what this origin hosts.
+
+        Public orientation for publishers: the blurb explains that
+        single-file HTML apps uploaded here become embeddable document
+        questions in Campus Classroom; flask_campus login state picks
+        the CTA (signed in → add/myapps, anonymous → sign-in with a
+        next= onto the add form). 404 unless EMBED_MODE=1 — on the main
+        deployment / is the Classroom app.
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        return flask.render_template("apps_landing.html")
+
+    @app.get("/apps/myapps")
     @login_manager.login_required
-    def publish_apps(**_):
-        """campus-apphost publisher UI (#81): upload and list apps.
+    def apps_myapps(**_):
+        """The signed-in publisher's own apps (#81).
+
+        Filtered app-side on uploaded_by_user_id (the registry has no
+        server-side filter; the listing is small in dev). ?deployed=
+        carries the redirect-after-add banner.
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        user_id = flask.g.user.id
+        with campus_session.user_session() as client:
+            apps = [
+                app for app in client.api.hostedapps.list()
+                if str(getattr(app, "uploaded_by_user_id", "")) == str(user_id)
+            ]
+        return flask.render_template(
+            "apps_myapps.html",
+            apps=apps,
+            deployed=flask.request.args.get("deployed"),
+        )
+
+    @app.get("/apps/add")
+    @login_manager.login_required
+    def apps_add(**_):
+        """Upload page for a new app (#81): slug + single-file HTML.
 
         Exists only on the apphost deployment — uploading lives on the
         hosting origin by design. Any signed-in Campus user may publish
         in dev (immediate, attribution via uploaded_by_user_id, captured
         by campus audit's session journey); approval gating arrives
-        before prod.
+        before prod. The form POSTs the apps JSON API; on success it
+        redirects to /apps/myapps?deployed=<slug>.
         """
         if not documents.embed_mode():
             flask.abort(404)
-        with campus_session.user_session() as client:
-            apps = client.api.hostedapps.list()
-        # Redirect-after-deploy (#81): publishApp() lands back here with
-        # ?deployed=<slug>, so the table renders fresh WITH the banner.
-        return flask.render_template(
-            "publish.html",
-            apps=apps,
-            deployed=flask.request.args.get("deployed"),
-        )
+        return flask.render_template("apps_add.html")
+
+    @app.get("/apps/new")
+    @login_manager.login_required
+    def apps_new(**_):
+        """Placeholder for in-browser app creation (#81).
+
+        The route exists so the IA is stable (nav/landing can link it);
+        authoring in the browser is not implemented yet — the page says
+        so and points at /apps/add for uploading existing HTML.
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        return flask.render_template("apps_new.html")
 
     @app.get("/api/v1/apps")
     @login_manager.login_required
@@ -165,7 +214,7 @@ def register_routes(app: flask.Flask, login_manager):
             "updated_at": meta.updated_at,
         }), (200 if replaced else 201)
 
-    @app.get("/embed/<assignment_id>/<question_id>")
+    @app.get("/apps/embed/<assignment_id>/<question_id>")
     def embed_document(assignment_id: str, question_id: str):
         """Serve a document question's HTML from the embed origin (#78).
 

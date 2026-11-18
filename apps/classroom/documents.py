@@ -55,7 +55,7 @@ class DocumentResponseError(ValueError):
 # --- configuration ----------------------------------------------------------
 
 def embed_mode() -> bool:
-    """True on the docs deployment (which may serve /embed routes)."""
+    """True on the docs deployment (which serves the /apps/ surface)."""
     return os.environ.get(EMBED_MODE_ENV) == "1"
 
 
@@ -314,13 +314,13 @@ def is_document(question) -> bool:
 
 
 def embed_url_for(assignment_id: str, question_id: str) -> str | None:
-    """Tokened /embed URL on the docs deployment, or None when this
+    """Tokened /apps/embed URL on the docs deployment, or None when this
     deployment has no embed origin configured."""
     origin = embed_origin()
     if not origin:
         return None
     token = mint_embed_token(assignment_id, question_id)
-    return f"{origin}/embed/{assignment_id}/{question_id}?t={token}"
+    return f"{origin}/apps/embed/{assignment_id}/{question_id}?t={token}"
 
 
 def sanitize_app_slug(slug: str) -> str | None:

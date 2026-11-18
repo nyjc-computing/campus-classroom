@@ -13,9 +13,9 @@ the hosting service and its roadmap:
 
 | | Main deployment | campus-apphost deployment |
 |---|---|---|
-| Serves | everything except `/embed` | `/embed/<assignment>/<question>?t=<token>` only (EMBED_MODE refuses all other routes) |
+| Serves | everything except the `/apps/` surface | `/apps/` only: landing page, `/apps/publish`, `/apps/embed/<assignment>/<question>?t=<token>` (EMBED_MODE refuses all other routes) |
 | Env | `EMBED_ORIGIN=<apphost origin>` | `EMBED_MODE=1`, `EMBED_PARENT_ORIGIN=<main origin>`, same `EMBED_TOKEN_SECRET` |
-| Trust | never serves executable teacher HTML | sandboxed frames (`allow-scripts allow-same-origin`, safe because origin ≠ main), CSP `frame-ancestors <main>`; no login surface, no `/api/v1/*`, no session cookies |
+| Trust | never serves executable teacher HTML | sandboxed frames (`allow-scripts allow-same-origin`, safe because origin ≠ main), CSP `frame-ancestors <main>`; `/apps/embed` has no login surface, no `/api/v1/*`, no session cookies |
 
 `EMBED_TOKEN_SECRET` (falls back to `SECRET_KEY`) is the HMAC key both
 deployments share: the main app mints embed tokens and export nonces,
@@ -25,8 +25,11 @@ separate services.
 ## Flow
 
 1. Publishers **deploy** single-file HTML apps on campus-apphost
-   (`/publish`, Campus login — any signed-in user in dev, deploy is
-   immediate, campus audit captures the action). Each app lands in the
+   (`/apps/add` upload form — the `/apps/` landing page links it,
+   Campus login via flask_campus; any signed-in user in dev, deploy is
+   immediate, campus audit captures the action; `/apps/myapps` lists
+   the publisher's own apps, `/apps/new` is a not-yet-implemented
+   in-browser authoring stub). Each app lands in the
    **campus.api hostedapps registry** (campus#1066): bytes
    CONTENT-ADDRESSED in the `hostedapps` bucket under the content's
    sha256, metadata in the `hostedapps` collection with publisher
@@ -42,14 +45,15 @@ registry (available for embedding); it becomes **assigned** once it is
 embedded in an assignment that has been sent to Classroom — re-deploying
 the same slug updates every assigned copy in place. There is no public
 serving URL; the app is reachable only via the authenticated Campus API
-and the token-gated `/embed` frames.
+and the token-gated `/apps/embed` frames.
 
 Send-to-Classroom creates the coursework as a **draft**: students see
 the assignment only after the teacher opens it in the Google Classroom
 UI and clicks Assign (verified live, #81 E2E).
 3. `/a/{id}` renders document questions as sandboxed iframes pointing
-   at tokened `/embed` URLs (doc HTML is never inlined into the page);
-   `/embed` serves the app's **current** bytes, hash-verified at serve.
+   at tokened `/apps/embed` URLs on the apphost origin (doc HTML is
+   never inlined into the page); `/apps/embed` serves the app's
+   **current** bytes, hash-verified at serve.
 4. At save/submit the page mints an **export challenge nonce**
    (`POST /api/v1/assignments/{id}/export-challenge`, enrollment-gated),
    asks the frame to serialize via postMessage, and PATCHes
@@ -77,8 +81,9 @@ UI and clicks Assign (verified live, #81 E2E).
 3. Generate the domain `campus-apphost-development.up.railway.app`.
 4. On the main service set: `EMBED_ORIGIN=https://campus-apphost-development.up.railway.app`,
    `EMBED_TOKEN_SECRET=<same value>`.
-5. Redeploy both. Verify: `GET <apphost>/embed/x/y` → 404 without a
-   token, 403 with a bad one; `GET <apphost>/` → 404 (embed-only mode);
+5. Redeploy both. Verify: `GET <apphost>/apps/embed/x/y` → 404 without
+   a token, 403 with a bad one; `GET <apphost>/` → 302 into the
+   `/apps/` landing page; `GET <apphost>/a/x` → 404 (embed-only mode);
    `/a/` of an assignment with a document question shows the frame.
 
 Local dev works with one codebase served twice: run `main.py` on port
