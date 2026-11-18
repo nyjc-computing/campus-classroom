@@ -224,3 +224,20 @@ body.doc-max-open { overflow: hidden; }
 @media (max-width: 575.98px) {
     .doc-embed iframe { height: 420px; }
 }
+
+/* --- Verbatim multi-line text -------------------------------------------- */
+/* Assignment text (descriptions, prompts, questions, feedback) is plain
+   text typed by the author: render their newlines as line breaks
+   instead of letting HTML white-space collapsing swallow them. */
+.text-verbatim {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+/* Auto-growing textareas (height driven by js/autosize.js; this caps
+   the growth and drops the now-redundant manual grip). */
+textarea.autosize {
+    max-height: 20rem;
+    overflow-y: auto;
+    resize: none;
+}

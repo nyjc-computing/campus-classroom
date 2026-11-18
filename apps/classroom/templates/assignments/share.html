@@ -29,7 +29,7 @@
         <div class="card-body">
             <h2>{{ assignment.title }}</h2>
             {% if assignment.description %}
-            <p class="text-muted">{{ assignment.description }}</p>
+            <p class="text-muted text-verbatim">{{ assignment.description }}</p>
             {% endif %}
 
             {% if not is_owner %}
@@ -62,9 +62,9 @@
                     <span class="badge text-bg-light border ms-1">Interactive document</span>
                     {% endif %}
                     {% if q.prompt %}
-                    <p class="text-muted small mb-2">{{ q.prompt }}</p>
+                    <p class="text-muted small mb-2 text-verbatim">{{ q.prompt }}</p>
                     {% endif %}
-                    <p class="mb-2">{{ q.question }}</p>
+                    <p class="mb-2 text-verbatim">{{ q.question }}</p>
                     {% if not is_owner %}
                     {% if renderer == 'document' %}
                     {% set embed_url = embed_urls.get(q.id) %}
@@ -98,7 +98,7 @@
                         This question type is not supported in this app yet.
                     </div>
                     {% else %}
-                    <textarea class="form-control answer-input"
+                    <textarea class="form-control answer-input autosize"
                               data-qid="{{ q.id }}" rows="3"
                               placeholder="Your answer…"
                               aria-label="Your answer to {{ q.id }}"></textarea>
@@ -265,12 +265,14 @@ function renderQuestions() {
         if (qid in answers) input.value = answers[qid];
         input.disabled = submitted;
     });
+    // .value changes fire no events; refit the answer textareas here.
+    if (typeof autosizeAll === 'function') autosizeAll();
     renderDocQuestions();
     document.querySelectorAll('.feedback-slot').forEach(slot => {
         const text = feedback[slot.dataset.feedbackFor];
         if (text) {
             slot.innerHTML = `
-                <div class="border rounded p-2 small bg-light">
+                <div class="border rounded p-2 small bg-light text-verbatim">
                     <i class="bi bi-chat-left-text-fill me-1 text-success"></i>
                     <strong>Teacher feedback:</strong> ${escapeHtml(text)}
                 </div>`;
