@@ -107,7 +107,29 @@ async function loadSubmission() {
 // script-disabled iframe only on demand.
 const SNAPSHOT_HTML = {};
 
+// Group nodes (passage-only parents — the builder emits them
+// question-less and type-less) hold no answers: render id + prompt
+// only, no response box, no feedback. Detected by children — not empty
+// text — so an unsupported type still renders its notice path (#62).
+function renderGroupNode(q) {
+    const level = q.id.split('.').length;
+    const indent = (level - 1) * 24;
+    return `
+        <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
+            <strong>${escapeHtml(q.id)}</strong>
+            ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+        </div>
+    `;
+}
+
+function isGroupNode(q) {
+    return assignment.questions.some(p => q.id.startsWith(p.id + '.'));
+}
+
 function renderQuestionWithResponse(q, submission) {
+    if (isGroupNode(q)) {
+        return renderGroupNode(q);
+    }
     if ((q.type || 'free-response') === 'document') {
         return renderDocumentResponse(q, submission);
     }

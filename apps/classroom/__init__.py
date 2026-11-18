@@ -190,7 +190,13 @@ def create_app():
     @login_manager.login_required
     def assignment_new(**_):
         """Create new assignment page."""
-        return flask.render_template("assignments/new.html")
+        return flask.render_template(
+            "assignments/new.html",
+            # The apphost (embed) deployment hosts the upload flow and
+            # the publisher's app list; the builder links both when the
+            # origin is configured (null degrades to embed-only).
+            embed_origin=documents.embed_origin(),
+        )
 
     @app.get("/assignments/<assignment_id>")
     @login_manager.login_required
@@ -203,7 +209,8 @@ def create_app():
         # (assignment_submissions gates the same way). A dead Campus
         # grant propagates to the app-wide re-auth redirect (#98).
         embed_urls = {}
-        if documents.embed_origin():
+        embed_origin = documents.embed_origin()
+        if embed_origin:
             with campus_session.user_session() as client:
                 try:
                     assignment = client.api.assignments[assignment_id].get()
@@ -222,6 +229,7 @@ def create_app():
             "assignments/view.html",
             assignment_id=assignment_id,
             embed_urls=embed_urls,
+            embed_origin=embed_origin,
             profile_integrations_url=(
                 f"{cauth.profile_integrations_url()}/profile/integrations"
             ),
@@ -405,6 +413,14 @@ def create_app():
             documents.question_id(q): documents.renderer_for(q)
             for q in questions if documents.question_id(q)
         }
+        # Group nodes: ids that parent dotted children (the builder emits
+        # them question-less and type-less) render as passage sections.
+        # Detected by children — not by empty text — so an unsupported
+        # type still shows its notice rather than a bare passage (#62).
+        qids = {documents.question_id(q) for q in questions}
+        group_ids = {
+            qid.rsplit(".", 1)[0] for qid in qids if qid and "." in qid
+        }
         embed_urls = {}
         if documents.embed_origin():
             for question in questions:
@@ -421,6 +437,7 @@ def create_app():
             courses=courses,
             pinned_course=pinned_course,
             question_renderers=question_renderers,
+            group_ids=group_ids,
             embed_urls=embed_urls,
             embed_origin=documents.embed_origin(),
             profile_integrations_url=(

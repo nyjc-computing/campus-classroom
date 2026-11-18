@@ -25,7 +25,9 @@ function recalculateAllIds() {
     });
 }
 
-// Set the tree's own question ID, then recurse into its subquestions
+// Set the tree's own question ID, then recurse into its subquestions.
+// Also syncs group mode: a card with subparts is a passage/group node —
+// its own question+type fields hide (they live in the subparts).
 function updateTreeIds(tree, id) {
     const card = tree.querySelector(':scope > .question-card');
     if (!card) return;
@@ -34,6 +36,11 @@ function updateTreeIds(tree, id) {
     card.dataset.level = id.split('.').length;
 
     const subquestions = card.nextElementSibling;
+    const hasSubparts = !!(subquestions
+        && subquestions.classList.contains('subquestions')
+        && subquestions.querySelector(':scope > .question-tree'));
+    card.classList.toggle('question-group', hasSubparts);
+
     if (subquestions && subquestions.classList.contains('subquestions')) {
         const childLevel = id.split('.').length + 1;
         subquestions.querySelectorAll(':scope > .question-tree').forEach((subTree, subIndex) => {
@@ -68,25 +75,39 @@ function createQuestionCard(level = 1) {
                 <label class="form-label small text-muted">Prompt (optional)</label>
                 <textarea class="form-control autosize question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
             </div>
-            <div class="mb-0">
-                <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
-                <textarea class="form-control autosize question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+            <div class="question-group-hint">
+                Passage/group — the answerable questions are the subparts below.
             </div>
-            <div class="mb-2 mt-2">
-                <label class="form-label small text-muted">Type</label>
-                <select class="form-select form-select-sm question-type" onchange="onQuestionTypeChange(this)">
-                    <option value="free-response">Free response</option>
-                    <option value="document">Interactive document</option>
-                </select>
-            </div>
-            <div class="question-doc-config d-none mb-0">
-                <label class="form-label small text-muted">Deployed app</label>
-                <select class="form-select form-select-sm question-doc-app"
-                        onchange="updateDocStatus(this)">
-                    <option value="">Loading deployed apps…</option>
-                </select>
-                <div class="form-text question-doc-status">Apps are uploaded on
-                    campus-apphost — pick one to embed it.</div>
+            <div class="question-leaf-fields">
+                <div class="mb-0">
+                    <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
+                    <textarea class="form-control autosize question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+                </div>
+                <div class="mb-2 mt-2">
+                    <label class="form-label small text-muted">Type</label>
+                    <select class="form-select form-select-sm question-type" onchange="onQuestionTypeChange(this)">
+                        <option value="free-response">Free response</option>
+                        <option value="document">Interactive document</option>
+                    </select>
+                </div>
+                <div class="question-doc-config d-none mb-0">
+                    <div class="doc-app-actions">
+                        <button type="button" class="btn btn-sm btn-outline-primary"
+                                onclick="toggleAppPicker(this)">Embed Existing App</button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary doc-apphost-link"
+                                data-apphost-path="/apps/add"
+                                onclick="openAppUpload(this)">Upload App</button>
+                        <a class="doc-apphost-link doc-myapps-link" target="_blank"
+                           rel="noopener" data-apphost-path="/apps/myapps"
+                           href="#">My Apps</a>
+                    </div>
+                    <select class="form-select form-select-sm question-doc-app d-none mt-2"
+                            onchange="onDocAppChange(this)">
+                        <option value="">Loading deployed apps…</option>
+                    </select>
+                    <div class="form-text question-doc-status">No app embedded yet.</div>
+                </div>
             </div>
         </div>
     `;
@@ -96,7 +117,24 @@ function createQuestionCard(level = 1) {
 
 // Deployed apps (#81): document questions reference an app by slug; the
 // list comes from campus.api files (apps/ prefix) via /api/v1/apps.
+// The upload flow lives on the apphost (embed) deployment —
+// window.APPHOST_ORIGIN, set by the page — and returning from it
+// refreshes the list, auto-embedding the new app in the card that
+// launched the upload.
 let APPS_PROMISE = null;
+let KNOWN_APP_SLUGS = null;      // slugs seen at the last load (focus diff)
+let APPS_REFRESHING = false;
+let UPLOAD_REQUESTOR = null;     // card whose Upload App button was clicked
+
+// ensureAppsLoaded plus slug bookkeeping: every load updates the baseline
+// the Upload App focus handler diffs against. Use this everywhere; the
+// raw promise would re-baseline out from under the diff.
+function loadAppsAndTrack() {
+    return ensureAppsLoaded().then(apps => {
+        KNOWN_APP_SLUGS = new Set(apps.map(app => app.slug));
+        return apps;
+    });
+}
 
 function ensureAppsLoaded() {
     if (!APPS_PROMISE) {
@@ -136,7 +174,7 @@ function populateAppSelect(select) {
     placeholder.value = '';
     placeholder.textContent = apps.length
         ? '— Choose a deployed app —'
-        : 'No apps published yet — upload one on campus-apphost.';
+        : 'No apps published yet — click Upload App to publish one.';
     select.appendChild(placeholder);
     apps.forEach(app => {
         const option = document.createElement('option');
@@ -158,12 +196,99 @@ function onQuestionTypeChange(select) {
     const isDocument = select.value === 'document';
     card.querySelector('.question-doc-config').classList.toggle('d-none', !isDocument);
     if (isDocument) {
-        ensureAppsLoaded().catch(error => {
+        // The apphost links need the origin; the picker needs options —
+        // populate right away when the apps list is already loaded,
+        // since ensureAppsLoaded's one-shot chain never refreshes a
+        // select created later (late-added document questions, demoted
+        // subparts, edit-mode populate).
+        refreshDocAppLinks(card);
+        if (window.CAMPUS_APPS) {
+            populateAppSelect(card.querySelector('.question-doc-app'));
+        }
+        loadAppsAndTrack()
+            .then(() => updateDocStatus(card.querySelector('.question-doc-app')))
+            .catch(error => {
+                const status = card.querySelector('.question-doc-status');
+                if (status) status.textContent = error.message;
+            });
+    }
+}
+
+// Apphost convenience links (Upload App / My Apps) point at the embed
+// (apphost) deployment; without a configured origin there is nowhere
+// to send them, so they hide and only the embed picker remains.
+function refreshDocAppLinks(card) {
+    const origin = (window.APPHOST_ORIGIN || '').replace(/\/$/, '');
+    card.querySelectorAll('.doc-apphost-link').forEach(link => {
+        if (origin) {
+            link.href = origin + link.dataset.apphostPath;
+            link.hidden = false;
+        } else {
+            link.hidden = true;
+            link.removeAttribute('href');
+        }
+    });
+}
+
+// Embed Existing App: reveal the app picker (hidden again once a
+// choice is made — the status line shows the embedded app).
+function toggleAppPicker(button) {
+    const card = button.closest('.question-card');
+    const select = card.querySelector('.question-doc-app');
+    if (select.classList.contains('d-none')) {
+        if (window.CAMPUS_APPS) populateAppSelect(select);
+        loadAppsAndTrack().catch(error => {
             const status = card.querySelector('.question-doc-status');
             if (status) status.textContent = error.message;
         });
+        select.classList.remove('d-none');
+        select.focus();
+    } else {
+        select.classList.add('d-none');
     }
 }
+
+function onDocAppChange(select) {
+    select.classList.add('d-none');
+    updateDocStatus(select);
+}
+
+// Upload App: the campus-apphost upload form, in a new tab. When the
+// user comes back, the focus handler below re-fetches the registry and
+// auto-embeds the newly published app into this card.
+function openAppUpload(button) {
+    const origin = (window.APPHOST_ORIGIN || '').replace(/\/$/, '');
+    if (!origin) return;
+    UPLOAD_REQUESTOR = button.closest('.question-card');
+    window.open(origin + button.dataset.apphostPath, '_blank', 'noopener');
+}
+
+// Returning from the Upload App tab: re-fetch the registry and, if this
+// card launched the upload and is still unembedded, embed the newest
+// newly published app in it.
+window.addEventListener('focus', () => {
+    if (!window.APPHOST_ORIGIN || APPS_REFRESHING) return;
+    if (!document.querySelector('.question-doc-config:not(.d-none)')) return;
+    const before = KNOWN_APP_SLUGS;
+    const requestor = UPLOAD_REQUESTOR;
+    UPLOAD_REQUESTOR = null;
+    APPS_REFRESHING = true;
+    APPS_PROMISE = null;   // a cached list defeats the point of the refresh
+    loadAppsAndTrack().then(apps => {
+        APPS_REFRESHING = false;
+        if (!requestor || !before) return;
+        const fresh = apps.filter(app => !before.has(app.slug));
+        if (!fresh.length) return;
+        const newest = fresh.slice().sort((a, b) =>
+            String(b.updated_at || '').localeCompare(String(a.updated_at || '')))[0];
+        const select = requestor.querySelector('.question-doc-app');
+        if (select && !select.value && !select.dataset.appSlug) {
+            select.value = newest.slug;
+            select.dataset.appSlug = newest.slug;
+            updateDocStatus(select);
+        }
+    }).catch(() => { APPS_REFRESHING = false; });
+});
 
 function setQuestionType(card, typeId) {
     const select = card.querySelector('.question-type');
@@ -173,9 +298,16 @@ function setQuestionType(card, typeId) {
 
 function updateDocStatus(select) {
     const status = select.closest('.question-card').querySelector('.question-doc-status');
-    if (!select.value) return;
-    const option = select.options[select.selectedIndex];
-    status.textContent = `Embeds ${option.textContent} — served live from the registry.`;
+    if (!status) return;
+    if (select.value && select.selectedIndex > 0) {
+        const option = select.options[select.selectedIndex];
+        status.textContent = `Embeds ${option.textContent} — served live from the registry.`;
+        return;
+    }
+    const hasApps = (window.CAMPUS_APPS || []).length > 0;
+    status.textContent = hasApps
+        ? 'No app embedded yet — click Embed Existing App to choose one.'
+        : 'No apps published yet — click Upload App to publish one.';
 }
 
 // Add top-level question
@@ -190,6 +322,40 @@ function addTopLevelQuestion() {
     recalculateAllIds();
 }
 
+// A parent with subparts is a passage/group node: its own question+type
+// moves into a new FIRST subpart, so every answerable question lives at
+// leaf level (adding a subpart to "q1" makes its content q1.a and the
+// fresh subpart q1.b). No-op for an empty free-response card.
+function demoteCardContent(card, subquestions, level) {
+    const questionText = card.querySelector('.question-text').value;
+    const typeId = card.querySelector('.question-type').value;
+    if (!questionText.trim() && typeId !== 'document') return;
+
+    const demotedTree = document.createElement('div');
+    demotedTree.className = 'question-tree';
+    demotedTree.innerHTML = createQuestionCard(level);
+    const demotedCard = demotedTree.querySelector('.question-card');
+    demotedCard.querySelector('.question-text').value = questionText;
+    // setQuestionType first: it populates the app picker once the apps
+    // list is loaded, so the slug below lands on real options.
+    setQuestionType(demotedCard, typeId);
+    if (typeId === 'document') {
+        // dataset.appSlug is the pending slug while the apps list is
+        // still loading (edit-mode populate); prefer the picked value.
+        const parentSelect = card.querySelector('.question-doc-app');
+        const slug = parentSelect.value || parentSelect.dataset.appSlug || '';
+        const slugSelect = demotedCard.querySelector('.question-doc-app');
+        slugSelect.value = slug;
+        slugSelect.dataset.appSlug = slug;
+        updateDocStatus(slugSelect);
+    }
+
+    card.querySelector('.question-text').value = '';
+    card.querySelector('.question-type').value = 'free-response';
+    subquestions.insertBefore(demotedTree, subquestions.firstChild);
+    setupDragAndDrop(demotedCard);
+}
+
 // Add subpart to existing question
 function addSubpart(button) {
     const card = button.closest('.question-card');
@@ -202,6 +368,8 @@ function addSubpart(button) {
     }
 
     const newLevel = parseInt(card.dataset.level || 1) + 1;
+    demoteCardContent(card, subquestions, newLevel);
+
     const tree = document.createElement('div');
     tree.className = 'question-tree';
     tree.innerHTML = createQuestionCard(newLevel);
@@ -287,7 +455,9 @@ function populateBuilderFromFlat(flatQuestions) {
             const slug = (q.data && q.data.slug) || '';
             appSelect.dataset.appSlug = slug;   // kept until apps load
             appSelect.value = slug;
-            ensureAppsLoaded().catch(() => {});
+            // Once the options exist, show what's embedded in the status.
+            loadAppsAndTrack().then(() => updateDocStatus(appSelect))
+                .catch(() => {});
         }
 
         stack.push({ depth, card });
@@ -368,13 +538,16 @@ function handleDrop(e) {
         // Reorder: take over the target's spot (whole group moves together)
         targetTree.before(sourceTree);
     } else if (sourceDepth < targetDepth) {
-        // Demote: become the last subpart of the target
+        // Demote: become the last subpart of the target — and when the
+        // target still holds its own question+type, that content
+        // demotes into the first subpart (groups are passage nodes).
         let subquestions = targetCard.nextElementSibling;
         if (!subquestions || !subquestions.classList.contains('subquestions')) {
             subquestions = document.createElement('div');
             subquestions.className = 'subquestions';
             targetCard.after(subquestions);
         }
+        demoteCardContent(targetCard, subquestions, targetDepth + 1);
         subquestions.appendChild(sourceTree);
     } else {
         // Promote: follow the target as a sibling at the target's level
@@ -413,19 +586,25 @@ function collectQuestions(container) {
         const questionText = card.querySelector('.question-text').value.trim();
         const typeId = card.querySelector('.question-type').value;
 
+        const subquestions = card.nextElementSibling;
+        const isGroup = !!(subquestions
+            && subquestions.classList.contains('subquestions')
+            && subquestions.querySelectorAll(':scope > .question-tree').length > 0);
+
+        // Group nodes carry only the passage; the answerable question+
+        // type pairs live in their subparts.
         const question = {
             id: badge.textContent,
             prompt: prompt,
-            question: questionText
+            question: isGroup ? '' : questionText
         };
-        if (typeId === 'document') {
+        if (!isGroup && typeId === 'document') {
             question.type = typeId;
             question.data = { slug: card.querySelector('.question-doc-app').value };
         }
 
         // Collect subquestions
-        const subquestions = card.nextElementSibling;
-        if (subquestions && subquestions.classList.contains('subquestions')) {
+        if (isGroup) {
             const subQuestions = collectQuestions(subquestions);
             if (subQuestions.length > 0) {
                 question.subquestions = subQuestions;
@@ -473,7 +652,12 @@ function collectValidatedQuestions() {
         return null;
     }
 
-    const incomplete = questions.find(q => !q.question);
+    // Only leaf questions carry answerable text — group nodes (parents
+    // of dotted children) hold just the passage.
+    const parents = new Set(questions
+        .filter(q => q.id.includes('.'))
+        .map(q => q.id.slice(0, q.id.lastIndexOf('.'))));
+    const incomplete = questions.find(q => !q.question && !parents.has(q.id));
     if (incomplete) {
         alert(`Question ${incomplete.id} is missing its question text.`);
         return null;
@@ -482,8 +666,8 @@ function collectValidatedQuestions() {
     const badDoc = questions.find(q =>
         q.type === 'document' && !q.data.slug);
     if (badDoc) {
-        alert(`Question ${badDoc.id}: choose a deployed app to embed. `
-              + 'Apps are uploaded on campus-apphost.');
+        alert(`Question ${badDoc.id}: no app embedded — click `
+              + 'Embed Existing App or Upload App on the question.');
         return null;
     }
 

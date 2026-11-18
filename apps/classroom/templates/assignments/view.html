@@ -58,8 +58,18 @@ const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
 // server-side like the student answer sheet; empty when the embed
 // origin is not configured (previews degrade to a notice).
 const EMBED_URLS = {{ embed_urls | tojson }};
+// Origin of the campus-apphost (embed) deployment: hosts the Upload App
+// flow and the publisher's My Apps list; null hides those links.
+window.APPHOST_ORIGIN = {{ embed_origin | tojson }};
 let assignment = null;
 let editing = false;
+
+// Group nodes: ids that parent dotted children (the builder emits them
+// question-less and type-less). Detected by children — not empty text —
+// so counts skip only real groups.
+function isGroupNode(q) {
+    return assignment.questions.some(p => q.id.startsWith(p.id + '.'));
+}
 
 function isLocked() {
     return assignment.classroom_links && assignment.classroom_links.length > 0;
@@ -132,7 +142,7 @@ function renderViewMode() {
 
                 <hr>
 
-                <h5 class="mb-3">Questions (${assignment.questions.length})</h5>
+                <h5 class="mb-3">Questions (${assignment.questions.filter(q => !isGroupNode(q)).length})</h5>
 
                 <div class="questions-list mb-4">
                     ${assignment.questions.map(q => renderQuestion(q)).join('')}
@@ -255,7 +265,7 @@ function renderQuestion(q) {
         <div class="question-item mb-3 p-3" style="margin-left: ${indent}px">
             <strong>${escapeHtml(q.id)}</strong> ${typeBadge}
             ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
-            <p class="text-verbatim">${escapeHtml(q.question)}</p>
+            ${q.question ? `<p class="text-verbatim">${escapeHtml(q.question)}</p>` : ''}
             ${q.type === 'document' ? renderDocEmbed(q) : ''}
         </div>
     `;

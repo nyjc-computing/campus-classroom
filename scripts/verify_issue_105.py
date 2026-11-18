@@ -15,7 +15,7 @@ are faked like verify_issue_28/98/104 do them:
 
 Covers, per the issue checklist:
 
-1. Header nav (#105): Assignments + New assignment render for a signed-in
+1. Header nav (#105): Assignments + Submissions render for a signed-in
    user, and do not render (Sign In instead) for an anonymous visitor.
 2. Dashboard page: the placeholder is gone — the page server-renders the
    signed-in shell and client-fetches rule-4 data (the fetch URLs,
@@ -347,8 +347,8 @@ check("signed-in pages render the nav links",
       r.status_code == 200
       and 'href="/assignments"' in html
       and ">Assignments</a>" in html
-      and 'href="/assignments/new"' in html
-      and ">New assignment</a>" in html,
+      and 'href="/submissions"' in html
+      and ">Submissions</a>" in html,
       f"status={r.status_code}")
 
 r = anonymous_client.get("/")
@@ -356,14 +356,14 @@ html = r.get_data(as_text=True)
 check("anonymous visitors get Sign In, no nav links",
       r.status_code == 200
       and ">Sign In<" in html
-      and ">New assignment<" not in html
+      and ">Submissions</a>" not in html
       and ">Assignments</a>" not in html,
       f"status={r.status_code}")
 
 r = student_client.get("/assignments")
 html = r.get_data(as_text=True)
 check("nav renders on a sibling page too (base.html)",
-      r.status_code == 200 and ">New assignment</a>" in html)
+      r.status_code == 200 and ">Submissions</a>" in html)
 
 
 # --- 2. dashboard page ----------------------------------------------------------

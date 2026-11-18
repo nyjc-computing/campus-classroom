@@ -194,7 +194,7 @@ function rowHtml({ assignment: a, counts, links }) {
             </td>
             <td class="text-nowrap">${timestamp(a.created_at)}</td>
             <td>${links.map(linkChip).join(' ') || '<span class="text-muted small">Not sent to Classroom</span>'}</td>
-            <td>${a.questions.length}</td>
+            <td>${a.questions.filter(q => !a.questions.some(p => q.id.startsWith(p.id + '.'))).length}</td>
             <td class="text-nowrap">${counts ? `${counts.submitted} / ${counts.total}` : '<span class="text-muted">—</span>'}</td>
             <td class="text-nowrap text-end">
                 <a href="${drilldown}" class="btn btn-sm btn-outline-primary">Submissions</a>
@@ -221,7 +221,7 @@ function assignedRowHtml({ assignment: a }) {
                 <span class="fw-semibold">${escapeHtml(a.title)}</span>
                 <span class="badge bg-success">Assigned to you</span>
             </div>
-            <small class="text-muted">${a.questions.length} questions · by your teacher</small>
+            <small class="text-muted">${a.questions.filter(q => !a.questions.some(p => q.id.startsWith(p.id + '.'))).length} questions · by your teacher</small>
         </a>`;
 }
 
