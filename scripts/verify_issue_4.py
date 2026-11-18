@@ -118,13 +118,15 @@ def assignments_list():
 
 with render_app.test_request_context():
     flask.g.user = None
-    new_html = flask.render_template("assignments/new.html")
+    new_html = flask.render_template("assignments/new.html", embed_origin=None)
     # Context must mirror the assignment_view route: view.html pipes its
     # context vars through | tojson, which raises on a missing one
     # (Jinja Undefined) — the crash this check exists to catch (issue #36).
     view_html = flask.render_template(
         "assignments/view.html",
         assignment_id="assignment_test",
+        embed_urls={},
+        embed_origin=None,
         profile_integrations_url="https://profile.example/profile/integrations",
     )
 check("assignments/new.html renders", "Create New Assignment" in new_html)
