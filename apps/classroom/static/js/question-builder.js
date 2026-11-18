@@ -52,7 +52,7 @@ function updateTreeIds(tree, id) {
 // Add a new question card
 function createQuestionCard(level = 1) {
     return `
-        <div class="question-card" draggable="true" data-level="${level}">
+        <div class="question-card" data-level="${level}">
             <div class="question-card-header">
                 <div class="d-flex align-items-center">
                     <span class="drag-handle" title="Drag to reorder">
@@ -470,6 +470,11 @@ function populateBuilderFromFlat(flatQuestions) {
 let draggedElement = null;
 
 function setupDragAndDrop(card) {
+    // Reorder drags arm per gesture: a card left draggable="true"
+    // intercepts text-selection drags inside its own inputs (#121).
+    card.addEventListener('mousedown', (e) => {
+        card.draggable = !!e.target.closest('.drag-handle');
+    });
     card.addEventListener('dragstart', handleDragStart);
     card.addEventListener('dragend', handleDragEnd);
     card.addEventListener('dragover', handleDragOver);
