@@ -695,13 +695,15 @@ check("runtime scripts are the only additions (page CSP frame-ancestors)",
       resp.headers.get("Content-Security-Policy", ""))
 
 resp = student_client.get(
-    f"/apps/embed/{ASSIGNMENT_ID}/q1?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q2')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q1?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q2')}")
 check("a token for another question 403s", resp.status_code == 403,
       f"status={resp.status_code}")
 
 CALLS.clear()
 resp = student_client.get(
-    f"/apps/embed/{ASSIGNMENT_ID}/q3?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q3')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q3?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q3')}")
 body = resp.get_data(as_text=True)
 check("slug-referencing question serves the registry app's current bytes",
       resp.status_code == 200 and "registry-app-marker" in body
@@ -710,7 +712,8 @@ check("slug-referencing question serves the registry app's current bytes",
       f"status={resp.status_code}")
 
 resp = student_client.get(
-    f"/apps/embed/{ASSIGNMENT_ID}/q4?t={documents.mint_embed_token(ASSIGNMENT_ID, 'q4')}")
+    f"/apps/embed/{ASSIGNMENT_ID}/q4?t="
+    f"{documents.mint_embed_token(ASSIGNMENT_ID, 'q4')}")
 check("a slug whose file is gone answers 404",
       resp.status_code == 404, f"status={resp.status_code}")
 
