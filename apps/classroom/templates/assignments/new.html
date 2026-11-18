@@ -41,6 +41,10 @@
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script>
+// Origin of the campus-apphost (embed) deployment: hosts the Upload App
+// flow and the publisher's My Apps list; null hides those links.
+window.APPHOST_ORIGIN = {{ embed_origin | tojson }};
+
 // Submit assignment
 async function submitAssignment(e) {
     e.preventDefault();

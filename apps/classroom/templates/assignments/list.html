@@ -81,7 +81,7 @@ async function loadAssignments() {
                         </h5>
                         ${assignment.description ? `<p class="text-muted small mb-2">${escapeHtml(assignment.description)}</p>` : ''}
                         <div class="mb-2">
-                            <span class="badge bg-secondary">${assignment.questions.length} questions</span>
+                            <span class="badge bg-secondary">${assignment.questions.filter(q => !assignment.questions.some(p => q.id.startsWith(p.id + '.'))).length} questions</span>
                             ${mine
                                 ? (assignment.classroom_links.length > 0 ? '<span class="badge bg-primary ms-2">Linked to Classroom</span>' : '')
                                 : '<span class="badge bg-success ms-2">Assigned to you</span>'}
