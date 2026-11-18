@@ -66,11 +66,11 @@ function createQuestionCard(level = 1) {
             </div>
             <div class="mb-2">
                 <label class="form-label small text-muted">Prompt (optional)</label>
-                <textarea class="form-control question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
+                <textarea class="form-control autosize question-prompt" rows="2" placeholder="Context or passage for the question..."></textarea>
             </div>
             <div class="mb-0">
                 <label class="form-label small text-muted">Question <span class="text-danger">*</span></label>
-                <textarea class="form-control question-text" rows="2" required placeholder="Enter your question here..."></textarea>
+                <textarea class="form-control autosize question-text" rows="2" required placeholder="Enter your question here..."></textarea>
             </div>
             <div class="mb-2 mt-2">
                 <label class="form-label small text-muted">Type</label>

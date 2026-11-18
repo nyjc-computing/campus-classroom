@@ -115,7 +115,7 @@ function renderViewMode() {
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <h2>${escapeHtml(assignment.title)}</h2>
                 </div>
-                ${assignment.description ? `<p class="text-muted">${escapeHtml(assignment.description)}</p>` : ''}
+                ${assignment.description ? `<p class="text-muted text-verbatim">${escapeHtml(assignment.description)}</p>` : ''}
 
                 ${isLocked() ? `
                     <div class="alert alert-info">
@@ -166,7 +166,7 @@ function renderEditMode() {
 
                     <div class="mb-3">
                         <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3">${escapeHtml(assignment.description || '')}</textarea>
+                        <textarea class="form-control autosize" id="description" name="description" rows="3">${escapeHtml(assignment.description || '')}</textarea>
                     </div>
 
                     <div class="mb-3">
@@ -254,8 +254,8 @@ function renderQuestion(q) {
     return `
         <div class="question-item mb-3 p-3" style="margin-left: ${indent}px">
             <strong>${escapeHtml(q.id)}</strong> ${typeBadge}
-            ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
-            <p>${escapeHtml(q.question)}</p>
+            ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+            <p class="text-verbatim">${escapeHtml(q.question)}</p>
             ${q.type === 'document' ? renderDocEmbed(q) : ''}
         </div>
     `;

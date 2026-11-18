@@ -120,14 +120,14 @@ function renderQuestionWithResponse(q, submission) {
         <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
             <div>
                 <strong>${escapeHtml(q.id)}</strong>
-                ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
-                <p class="mb-2">${escapeHtml(q.question)}</p>
+                ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+                <p class="mb-2 text-verbatim">${escapeHtml(q.question)}</p>
             </div>
 
             <div class="response-box">
                 <label class="form-label text-muted small">${readOnly ? "Student's Response:" : "Your Response:"}</label>
                 <textarea
-                    class="form-control"
+                    class="form-control autosize"
                     id="response-${q.id}"
                     rows="3"
                     ${(submission.submitted_at || readOnly) ? 'disabled' : ''}
@@ -177,8 +177,8 @@ function renderDocumentResponse(q, submission) {
             <div>
                 <strong>${escapeHtml(q.id)}</strong>
                 <span class="badge text-bg-light border ms-1">Interactive document</span>
-                ${q.prompt ? `<p class="text-muted small mb-2">${escapeHtml(q.prompt)}</p>` : ''}
-                <p class="mb-2">${escapeHtml(q.question)}</p>
+                ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+                <p class="mb-2 text-verbatim">${escapeHtml(q.question)}</p>
             </div>
 
             <div class="response-box">
