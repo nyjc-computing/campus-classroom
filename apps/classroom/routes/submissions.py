@@ -8,9 +8,10 @@ Attempt/submit authorization (PRD v1.3 rule 3, #28): creating or
 mutating a submission requires the signed-in student to be a member of
 a Google Classroom course the assignment is linked to (checked against
 their live Classroom courses via the auth bridge). Reads keep the
-ownership rules from the #29 slice; teacher feedback stays per §6.11
-(any teacher of the course — enforcement is future work, not a #28
-rule).
+ownership rules from the #29 slice; teacher review and feedback are
+per §6.11 (any teacher of the course) — enforced since #130 via
+enrollment.can_review (assignment creator OR co-tutor), mirroring
+Classroom's own submission contract.
 """
 
 import flask
@@ -63,8 +64,9 @@ def register_routes(app: flask.Flask, login_manager):
 
         Access rules (PRD §6.9): a user sees their own submissions, or —
         when filtering by assignment_id — the submissions of an
-        assignment they own (teacher review). Requesting another
-        student's submissions answers 404 without revealing data.
+        assignment they may review (creator or co-tutor, #130).
+        Requesting another student's submissions answers 404 without
+        revealing data.
 
         Query parameters:
             - assignment_id: Filter by assignment (must be owned by the caller)
@@ -93,7 +95,7 @@ def register_routes(app: flask.Flask, login_manager):
                     if "not found" in str(e).lower():
                         return flask.jsonify({"error": "Assignment not found"}), 404
                     raise
-                if str(getattr(assignment, "created_by", "")) != str(user_id):
+                if not enrollment.can_review(assignment, user_id):
                     return flask.jsonify({"error": "Assignment not found"}), 404
 
             submissions = client.api.submissions.list(
@@ -165,9 +167,10 @@ def register_routes(app: flask.Flask, login_manager):
     def api_get_submission(submission_id: str, **_):
         """Get a submission by ID.
 
-        Visible to the submission's student and to the owner of the
-        assignment it belongs to (teacher review, PRD §6.9). Anyone else
-        gets 404 so the submission's existence is not revealed.
+        Visible to the submission's student and to reviewers of the
+        assignment it belongs to (creator or co-tutor — teacher review,
+        PRD §6.9, #130). Anyone else gets 404 so the submission's
+        existence is not revealed.
 
         Returns:
             Submission as JSON, or 404 if not found or not visible
@@ -188,7 +191,7 @@ def register_routes(app: flask.Flask, login_manager):
                     if "not found" in str(e).lower():
                         return flask.jsonify({"error": "Submission not found"}), 404
                     raise
-                if str(getattr(assignment, "created_by", "")) != str(user_id):
+                if not enrollment.can_review(assignment, user_id):
                     return flask.jsonify({"error": "Submission not found"}), 404
 
         return flask.jsonify(submission.to_resource())
@@ -198,8 +201,8 @@ def register_routes(app: flask.Flask, login_manager):
     def api_list_submissions_by_assignment(assignment_id: str, **_):
         """List all submissions for an assignment.
 
-        Assignment-owner only (teacher review, PRD §6.9); anyone else
-        gets 404 without revealing the submissions.
+        Reviewers only (creator or co-tutor — teacher review, PRD §6.9,
+        #130); anyone else gets 404 without revealing the submissions.
 
         Returns:
             JSON array of submissions
@@ -212,7 +215,7 @@ def register_routes(app: flask.Flask, login_manager):
                 if "not found" in str(e).lower():
                     return flask.jsonify({"error": "Assignment not found"}), 404
                 raise
-            if str(getattr(assignment, "created_by", "")) != str(user_id):
+            if not enrollment.can_review(assignment, user_id):
                 return flask.jsonify({"error": "Assignment not found"}), 404
 
             submissions = client.api.submissions.by_assignment(assignment_id)
@@ -426,7 +429,11 @@ def register_routes(app: flask.Flask, login_manager):
     def api_add_feedback(submission_id: str, **_):
         """Add teacher feedback for a question response.
 
-        Replaces any existing feedback for this question.
+        Replaces any existing feedback for this question. Reviewers only
+        (assignment creator or co-tutor — PRD §6.11's "any teacher of the
+        course"); this closes the long-open MVP door that let ANY
+        authenticated user post feedback. Non-reviewers get 404 so the
+        submission's existence is not revealed.
 
         Request body:
             - question_id: Question ID (required)
@@ -435,6 +442,7 @@ def register_routes(app: flask.Flask, login_manager):
         Returns:
             Updated submission as JSON
         """
+        user_id = flask.g.user.id
         data = flask.request.get_json()
         if not data:
             return flask.jsonify({"error": "Request body required"}), 400
@@ -446,8 +454,18 @@ def register_routes(app: flask.Flask, login_manager):
             return flask.jsonify({"error": "feedback_text is required"}), 400
 
         with campus_session.user_session() as client:
-            # For MVP, any authenticated user can add feedback
-            # In production, verify the user is a teacher for this course
+            try:
+                current = client.api.submissions[submission_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Submission not found"}), 404
+                raise
+
+            assignment = _load_assignment(client, current.assignment_id)
+            if assignment is None:
+                return flask.jsonify({"error": "Submission not found"}), 404
+            if not enrollment.can_review(assignment, user_id):
+                return flask.jsonify({"error": "Submission not found"}), 404
 
             client.api.submissions[submission_id].feedback.add(
                 question_id=data["question_id"],

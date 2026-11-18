@@ -237,10 +237,11 @@ def create_app():
 
     # Submissions drill-down (#105): one assignment's submissions, linked
     # from the dashboard. Server-side gate mirrors the by-assignment
-    # API's ACL — the creator sees the page, everyone else (including
-    # enrolled students) gets 404 so the assignment's review surface is
-    # not revealed; the rows themselves are then client-fetched from the
-    # same owner-only API, so the gate is enforced twice.
+    # API's ACL — reviewers (the creator or a co-tutor, #130) see the
+    # page, everyone else (including enrolled students) gets 404 so the
+    # assignment's review surface is not revealed; the rows themselves
+    # are then client-fetched from the same reviewer-only API, so the
+    # gate is enforced twice.
     @app.get("/assignments/<assignment_id>/submissions")
     @login_manager.login_required
     def assignment_submissions(assignment_id: str, **_):
@@ -253,7 +254,7 @@ def create_app():
                 if "not found" in str(e).lower():
                     flask.abort(404)
                 raise
-            if str(getattr(assignment, "created_by", "")) != str(user_id):
+            if not enrollment.can_review(assignment, user_id):
                 flask.abort(404)
 
         # CampusSessionExpiredError propagates: the app-wide handler
@@ -264,31 +265,60 @@ def create_app():
             assignment_title=getattr(assignment, "title", assignment_id),
         )
 
-    # Submissions inbox (navbar resource page): every submission to an
-    # assignment the caller created, newest first. The rows are
-    # client-fetched from the owner-only by-assignment API, so a student
-    # (who owns no assignments) just sees the empty state — nothing can
-    # leak that the API would not already return them.
+    # Submissions inbox (navbar resource page): every submission to a
+    # reviewable assignment — the caller's own, or any linked to a course
+    # they teach (#130, mirroring Classroom's submission contract) —
+    # newest first. The route resolves the taught-course set for the
+    # client-side filter; like the rule-4 listing, a Classroom-bridge
+    # failure degrades to own assignments only (the API gates stay
+    # exact, so the degradation only ever hides). The rows are
+    # client-fetched from the reviewer-only by-assignment API, so a
+    # student just sees the empty state — nothing can leak that the API
+    # would not already return them.
     @app.get("/submissions")
     @login_manager.login_required
     def submissions_list(**_):
-        """List submissions across the caller's own assignments (staff)."""
-        return flask.render_template("submissions/list.html")
+        """List submissions across the caller's reviewable assignments (staff)."""
+        user_id = flask.g.user.id
+        try:
+            taught = enrollment.taught_courses()
+        except cauth.ClassroomAuthError as err:
+            flask.current_app.logger.warning(
+                "Submissions inbox degraded to own assignments for %s: %s (%s)",
+                user_id, err.code, err.message,
+            )
+            taught = {}
+        return flask.render_template(
+            "submissions/list.html",
+            taught_course_ids=sorted(taught),
+        )
 
     # Submission UI routes
     @app.get("/submissions/<submission_id>")
     @login_manager.login_required
     def submission_view(submission_id: str, **_):
-        """Review page for one submission (PRD §6.9 ACL, #104).
+        """Review page for one submission (PRD §6.9 ACL, #104; #130).
 
-        Allowed: the assignment's owner (staff review, the pre-#104
-        behavior) and — new — the submission's own student, who opens
-        this page from the review-link chip the mirror attaches in
-        Classroom; their view is read-only. Everyone else gets 404 so
+        Allowed: the submission's own student — who opens this page from
+        the review-link chip the mirror attaches in Classroom — the
+        assignment's owner (staff review, the pre-#104 behavior), and
+        any teacher of a linked course (co-tutor, #130: mirroring
+        Classroom's own submission contract). Everyone else gets 404 so
         the submission's existence is not revealed, matching the
         submission API's ACL. Teacher-only fields (Classroom-native
         draftGrade) render nowhere on this page — grades stay
         Classroom-native (parked phase-2), so there is nothing to leak.
+
+        The page is read-only for EVERY viewer: the response/submit
+        verbs behind its forms are student-only and 403 a reviewer
+        mid-click (the owner's editable affordances here were already
+        dead that way) — owners edit on /a/<id>, co-tutors review in the
+        drill-down. The assignment payload (title + questions) renders
+        server-side instead of being client-fetched:
+        /api/v1/assignments/<id> stays creator-only (a co-tutor must not
+        land in the builder), and this route is already reviewer-gated —
+        so it passes the questions down itself. One fewer client round
+        trip, too.
         """
         user_id = flask.g.user.id
         with campus_session.user_session() as client:
@@ -304,26 +334,29 @@ def create_app():
                     flask.abort(404)
                 raise
 
-            if str(getattr(submission, "student_id", "")) == str(user_id):
-                read_only = True
-            else:
-                try:
-                    assignment = client.api.assignments[
-                        submission.assignment_id].get()
-                except Exception as e:
-                    if "not found" in str(e).lower():
-                        flask.abort(404)
-                    raise
-                if str(getattr(assignment, "created_by", "")) != str(user_id):
+            try:
+                assignment = client.api.assignments[
+                    submission.assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
                     flask.abort(404)
-                read_only = False
+                raise
+
+            # Gate: the owning student, the creator, or a co-tutor.
+            if (str(getattr(submission, "student_id", "")) != str(user_id)
+                    and not enrollment.can_review(assignment, user_id)):
+                flask.abort(404)
 
         # CampusSessionExpiredError propagates: the app-wide handler
         # redirects browser paths into the campus OAuth flow (#98).
         return flask.render_template(
             "submissions/view.html",
             submission_id=submission_id,
-            read_only=read_only,
+            read_only=True,
+            assignment_title=getattr(
+                assignment, "title", submission.assignment_id),
+            assignment_questions=(
+                assignment.to_resource().get("questions") or []),
         )
 
     # Shareable assignment page (PRD §6.9): the Link Material fallback posts
