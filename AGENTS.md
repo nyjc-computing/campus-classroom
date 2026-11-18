@@ -153,6 +153,23 @@ Prerequisites and gotchas:
 
 ---
 
+## User-Journey Labeling (dev intent, all campus consumers)
+
+Document user journeys — every distinct request trip a user can make
+through the app (page loads, form posts, API hops) — each with a
+unique, stable, **hyphenated-lowercase** label (`create-assignment`,
+`send-to-classroom`). The audit plumbing exists: `init_journeys(app)`
+mints journey ids per episode (campus#803), and
+`@flask_campus.journey("name")` names action boundaries so spans carry
+`journey_name` (campus#828) — classroom wires both at the app factory.
+New routes that form an action boundary should take a journey name,
+kept consistent with the labels documented here. (Intent recorded
+2026-11-18 after #123: labeled journeys turn "user did X, never
+finished Y" into one queryable audit story instead of manual timestamp
+correlation.)
+
+---
+
 ## Reference Implementation: campus-admin
 
 Located in `d:\nyjc-computing\campus-admin`, this is the canonical example for building Campus apps.
