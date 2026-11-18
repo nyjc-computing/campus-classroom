@@ -352,8 +352,55 @@ function demoteCardContent(card, subquestions, level) {
 
     card.querySelector('.question-text').value = '';
     card.querySelector('.question-type').value = 'free-response';
+    // The leaf may have had its doc config on screen ("Embeds X — served
+    // live from the registry"); leaving it up reads as a dangling app
+    // attachment on a passage/group card (#120), so fold it away and
+    // clear the embed state the subpart now owns.
+    onQuestionTypeChange(card.querySelector('.question-type'));
+    const clearedSelect = card.querySelector('.question-doc-app');
+    clearedSelect.value = '';
+    delete clearedSelect.dataset.appSlug;
+    updateDocStatus(clearedSelect);
     subquestions.insertBefore(demotedTree, subquestions.firstChild);
     setupDragAndDrop(demotedCard);
+}
+
+// Same content bar demoteCardContent uses for moving leaf fields down:
+// question text or an embedded document app is worth preserving.
+function cardHasLeafContent(card) {
+    const text = card.querySelector('.question-text').value.trim();
+    const typeId = card.querySelector('.question-type').value;
+    return !!(text || typeId === 'document');
+}
+
+// Merge a subpart's content back into its parent — the reverse of
+// demoteCardContent (#120) — so deleting a parent's LAST subpart can
+// carry the content up instead of dropping it.
+function mergeCardContent(subCard, parentCard) {
+    const text = subCard.querySelector('.question-text').value;
+    const typeId = subCard.querySelector('.question-type').value;
+    const subSelect = subCard.querySelector('.question-doc-app');
+    const slug = subSelect.value || subSelect.dataset.appSlug || '';
+    const subPrompt = subCard.querySelector('.question-prompt').value;
+
+    // A prompt visible on the group parent is never clobbered; an empty
+    // one is filled from the subpart. The parent's question field is
+    // hidden (and empty) while grouped, so the subpart's text takes its
+    // place outright.
+    const parentPrompt = parentCard.querySelector('.question-prompt');
+    if (!parentPrompt.value.trim() && subPrompt.trim()) {
+        parentPrompt.value = subPrompt;
+    }
+    parentCard.querySelector('.question-text').value = text;
+    // setQuestionType first: it populates the app picker once the apps
+    // list is loaded, so the slug below lands on real options.
+    setQuestionType(parentCard, typeId);
+    if (typeId === 'document' && slug) {
+        const parentSelect = parentCard.querySelector('.question-doc-app');
+        parentSelect.value = slug;
+        parentSelect.dataset.appSlug = slug;
+        updateDocStatus(parentSelect);
+    }
 }
 
 // Add subpart to existing question
@@ -389,6 +436,27 @@ function removeQuestion(button) {
         && subquestions.querySelectorAll('.question-card').length > 0;
     if (hasSubparts && !confirm('Delete this question and all its subparts?')) {
         return;
+    }
+
+    // Deleting a parent's LAST subpart turns that parent back into a
+    // plain question — offer to carry the subpart's content up with it
+    // (the reverse of demoteCardContent) instead of dropping it (#120).
+    // Cancel keeps the old behaviour: delete subpart and content.
+    const container = tree.parentElement;
+    const parentTree = container && container.classList.contains('subquestions')
+        ? container.closest('.question-tree') : null;
+    const parentCard = parentTree
+        ? parentTree.querySelector(':scope > .question-card') : null;
+    if (parentCard
+            && container.querySelectorAll(':scope > .question-tree').length === 1
+            && cardHasLeafContent(card)
+            && confirm(`${card.querySelector('.question-id-badge').textContent} `
+                + `is the last subpart of `
+                + `${parentCard.querySelector('.question-id-badge').textContent}. `
+                + 'OK: merge its question, type and app back into the parent '
+                + 'and remove the subpart. Cancel: delete it with its '
+                + 'content.')) {
+        mergeCardContent(card, parentCard);
     }
 
     if (subquestions && subquestions.classList.contains('subquestions')) {
