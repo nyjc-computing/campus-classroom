@@ -150,7 +150,7 @@ async function publishApp() {
         }
         // Redirect-after-deploy: the reload renders the fresh Deployed
         // apps table plus the server-side success banner.
-        location.href = '/publish?deployed=' + encodeURIComponent(data.slug);
+        location.href = '{{ url_for("publish_apps") }}?deployed=' + encodeURIComponent(data.slug);
     } catch (error) {
         box.innerHTML = '<div class="alert alert-danger mb-0">Deployment failed. Please try again.</div>';
     } finally {

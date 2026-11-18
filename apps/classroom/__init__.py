@@ -115,6 +115,13 @@ def create_app():
 
     app.jinja_env.filters["timestamp"] = timestamp
 
+    # Embed deployments render the same templates but only serve the
+    # /apps/ surface, so base.html swaps the Classroom navbar (whose
+    # routes are gated 404 there) for the apphost one.
+    app.context_processor(
+        lambda: {"embed_mode": documents.embed_mode()}
+    )
+
     # Setup OAuth login manager
     login_manager = flask_campus.OAuthLoginManager(
         campus_client=campus,
@@ -136,21 +143,23 @@ def create_app():
 
     # campus-apphost containment (#81): a deployment running EMBED_MODE=1
     # is the dedicated app-hosting origin (campus-apphost) — it serves
-    # /embed plus the publisher surface (login, /publish, the apps API)
-    # and nothing else: no /a/, no submissions, no general /api/v1/*. A
-    # signed-in publisher does get a session there (they authenticated
-    # deliberately); embed-origin scripts still have no campus session
-    # to reach because /embed never sets one. Checked per request so the
-    # verify harness can flip the flag; in real deployments it's set
+    # the /apps/ surface (landing page, /apps/publish, /apps/embed) plus
+    # the apps JSON API, and nothing else: no /a/, no submissions, no
+    # general /api/v1/*. A signed-in publisher does get a session there
+    # (they authenticated deliberately); embed-origin scripts still have
+    # no campus session to reach because /apps/embed never sets one.
+    # / and /apps redirect into the landing page. Checked per request so
+    # the verify harness can flip the flag; in real deployments it's set
     # once and never changes.
     @app.before_request
     def _apphost_embed_only():
         if not documents.embed_mode():
             return None
         path = flask.request.path
+        if path in {"/", "/apps"}:
+            return flask.redirect(flask.url_for("apps_landing"))
         allowed = (
-            path.startswith(("/embed/", "/publish", "/api/v1/apps",
-                             "/static/"))
+            path.startswith(("/apps/", "/api/v1/apps", "/static/"))
             or path in {"/login", "/finalize_login", "/logout"}
         )
         if not allowed:
