@@ -137,6 +137,19 @@ main {
     padding-left: 1rem;
 }
 
+/* Document-question app row (#81): the two actions plus the My Apps
+   link to the apphost deployment; the picker reveals under the row. */
+.doc-app-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.doc-app-actions .doc-myapps-link {
+    margin-left: auto;
+    font-size: 0.8125rem;
+}
+
 /* Group mode (updateTreeIds): a question that has subparts is a
    passage/group node — its own question+type fields hide (adding the
    subpart demoted them into the first subpart) and a hint explains

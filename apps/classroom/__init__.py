@@ -190,7 +190,13 @@ def create_app():
     @login_manager.login_required
     def assignment_new(**_):
         """Create new assignment page."""
-        return flask.render_template("assignments/new.html")
+        return flask.render_template(
+            "assignments/new.html",
+            # The apphost (embed) deployment hosts the upload flow and
+            # the publisher's app list; the builder links both when the
+            # origin is configured (null degrades to embed-only).
+            embed_origin=documents.embed_origin(),
+        )
 
     @app.get("/assignments/<assignment_id>")
     @login_manager.login_required
@@ -203,7 +209,8 @@ def create_app():
         # (assignment_submissions gates the same way). A dead Campus
         # grant propagates to the app-wide re-auth redirect (#98).
         embed_urls = {}
-        if documents.embed_origin():
+        embed_origin = documents.embed_origin()
+        if embed_origin:
             with campus_session.user_session() as client:
                 try:
                     assignment = client.api.assignments[assignment_id].get()
@@ -222,6 +229,7 @@ def create_app():
             "assignments/view.html",
             assignment_id=assignment_id,
             embed_urls=embed_urls,
+            embed_origin=embed_origin,
             profile_integrations_url=(
                 f"{cauth.profile_integrations_url()}/profile/integrations"
             ),

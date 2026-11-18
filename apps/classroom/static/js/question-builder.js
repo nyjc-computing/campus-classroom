@@ -91,13 +91,22 @@ function createQuestionCard(level = 1) {
                     </select>
                 </div>
                 <div class="question-doc-config d-none mb-0">
-                    <label class="form-label small text-muted">Deployed app</label>
-                    <select class="form-select form-select-sm question-doc-app"
-                            onchange="updateDocStatus(this)">
+                    <div class="doc-app-actions">
+                        <button type="button" class="btn btn-sm btn-outline-primary"
+                                onclick="toggleAppPicker(this)">Embed Existing App</button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary doc-apphost-link"
+                                data-apphost-path="/apps/add"
+                                onclick="openAppUpload(this)">Upload App</button>
+                        <a class="doc-apphost-link doc-myapps-link" target="_blank"
+                           rel="noopener" data-apphost-path="/apps/myapps"
+                           href="#">My Apps</a>
+                    </div>
+                    <select class="form-select form-select-sm question-doc-app d-none mt-2"
+                            onchange="onDocAppChange(this)">
                         <option value="">Loading deployed apps…</option>
                     </select>
-                    <div class="form-text question-doc-status">Apps are uploaded on
-                        campus-apphost — pick one to embed it.</div>
+                    <div class="form-text question-doc-status">No app embedded yet.</div>
                 </div>
             </div>
         </div>
@@ -108,7 +117,24 @@ function createQuestionCard(level = 1) {
 
 // Deployed apps (#81): document questions reference an app by slug; the
 // list comes from campus.api files (apps/ prefix) via /api/v1/apps.
+// The upload flow lives on the apphost (embed) deployment —
+// window.APPHOST_ORIGIN, set by the page — and returning from it
+// refreshes the list, auto-embedding the new app in the card that
+// launched the upload.
 let APPS_PROMISE = null;
+let KNOWN_APP_SLUGS = null;      // slugs seen at the last load (focus diff)
+let APPS_REFRESHING = false;
+let UPLOAD_REQUESTOR = null;     // card whose Upload App button was clicked
+
+// ensureAppsLoaded plus slug bookkeeping: every load updates the baseline
+// the Upload App focus handler diffs against. Use this everywhere; the
+// raw promise would re-baseline out from under the diff.
+function loadAppsAndTrack() {
+    return ensureAppsLoaded().then(apps => {
+        KNOWN_APP_SLUGS = new Set(apps.map(app => app.slug));
+        return apps;
+    });
+}
 
 function ensureAppsLoaded() {
     if (!APPS_PROMISE) {
@@ -148,7 +174,7 @@ function populateAppSelect(select) {
     placeholder.value = '';
     placeholder.textContent = apps.length
         ? '— Choose a deployed app —'
-        : 'No apps published yet — upload one on campus-apphost.';
+        : 'No apps published yet — click Upload App to publish one.';
     select.appendChild(placeholder);
     apps.forEach(app => {
         const option = document.createElement('option');
@@ -170,19 +196,99 @@ function onQuestionTypeChange(select) {
     const isDocument = select.value === 'document';
     card.querySelector('.question-doc-config').classList.toggle('d-none', !isDocument);
     if (isDocument) {
-        // When the apps list is already loaded, populate this card's
-        // picker right away — ensureAppsLoaded's one-shot chain has run
-        // and would never refresh a select created later (late-added
-        // document questions, demoted subparts, edit-mode populate).
+        // The apphost links need the origin; the picker needs options —
+        // populate right away when the apps list is already loaded,
+        // since ensureAppsLoaded's one-shot chain never refreshes a
+        // select created later (late-added document questions, demoted
+        // subparts, edit-mode populate).
+        refreshDocAppLinks(card);
         if (window.CAMPUS_APPS) {
             populateAppSelect(card.querySelector('.question-doc-app'));
         }
-        ensureAppsLoaded().catch(error => {
+        loadAppsAndTrack()
+            .then(() => updateDocStatus(card.querySelector('.question-doc-app')))
+            .catch(error => {
+                const status = card.querySelector('.question-doc-status');
+                if (status) status.textContent = error.message;
+            });
+    }
+}
+
+// Apphost convenience links (Upload App / My Apps) point at the embed
+// (apphost) deployment; without a configured origin there is nowhere
+// to send them, so they hide and only the embed picker remains.
+function refreshDocAppLinks(card) {
+    const origin = (window.APPHOST_ORIGIN || '').replace(/\/$/, '');
+    card.querySelectorAll('.doc-apphost-link').forEach(link => {
+        if (origin) {
+            link.href = origin + link.dataset.apphostPath;
+            link.hidden = false;
+        } else {
+            link.hidden = true;
+            link.removeAttribute('href');
+        }
+    });
+}
+
+// Embed Existing App: reveal the app picker (hidden again once a
+// choice is made — the status line shows the embedded app).
+function toggleAppPicker(button) {
+    const card = button.closest('.question-card');
+    const select = card.querySelector('.question-doc-app');
+    if (select.classList.contains('d-none')) {
+        if (window.CAMPUS_APPS) populateAppSelect(select);
+        loadAppsAndTrack().catch(error => {
             const status = card.querySelector('.question-doc-status');
             if (status) status.textContent = error.message;
         });
+        select.classList.remove('d-none');
+        select.focus();
+    } else {
+        select.classList.add('d-none');
     }
 }
+
+function onDocAppChange(select) {
+    select.classList.add('d-none');
+    updateDocStatus(select);
+}
+
+// Upload App: the campus-apphost upload form, in a new tab. When the
+// user comes back, the focus handler below re-fetches the registry and
+// auto-embeds the newly published app into this card.
+function openAppUpload(button) {
+    const origin = (window.APPHOST_ORIGIN || '').replace(/\/$/, '');
+    if (!origin) return;
+    UPLOAD_REQUESTOR = button.closest('.question-card');
+    window.open(origin + button.dataset.apphostPath, '_blank', 'noopener');
+}
+
+// Returning from the Upload App tab: re-fetch the registry and, if this
+// card launched the upload and is still unembedded, embed the newest
+// newly published app in it.
+window.addEventListener('focus', () => {
+    if (!window.APPHOST_ORIGIN || APPS_REFRESHING) return;
+    if (!document.querySelector('.question-doc-config:not(.d-none)')) return;
+    const before = KNOWN_APP_SLUGS;
+    const requestor = UPLOAD_REQUESTOR;
+    UPLOAD_REQUESTOR = null;
+    APPS_REFRESHING = true;
+    APPS_PROMISE = null;   // a cached list defeats the point of the refresh
+    loadAppsAndTrack().then(apps => {
+        APPS_REFRESHING = false;
+        if (!requestor || !before) return;
+        const fresh = apps.filter(app => !before.has(app.slug));
+        if (!fresh.length) return;
+        const newest = fresh.slice().sort((a, b) =>
+            String(b.updated_at || '').localeCompare(String(a.updated_at || '')))[0];
+        const select = requestor.querySelector('.question-doc-app');
+        if (select && !select.value && !select.dataset.appSlug) {
+            select.value = newest.slug;
+            select.dataset.appSlug = newest.slug;
+            updateDocStatus(select);
+        }
+    }).catch(() => { APPS_REFRESHING = false; });
+});
 
 function setQuestionType(card, typeId) {
     const select = card.querySelector('.question-type');
@@ -192,9 +298,16 @@ function setQuestionType(card, typeId) {
 
 function updateDocStatus(select) {
     const status = select.closest('.question-card').querySelector('.question-doc-status');
-    if (!select.value) return;
-    const option = select.options[select.selectedIndex];
-    status.textContent = `Embeds ${option.textContent} — served live from the registry.`;
+    if (!status) return;
+    if (select.value && select.selectedIndex > 0) {
+        const option = select.options[select.selectedIndex];
+        status.textContent = `Embeds ${option.textContent} — served live from the registry.`;
+        return;
+    }
+    const hasApps = (window.CAMPUS_APPS || []).length > 0;
+    status.textContent = hasApps
+        ? 'No app embedded yet — click Embed Existing App to choose one.'
+        : 'No apps published yet — click Upload App to publish one.';
 }
 
 // Add top-level question
@@ -227,9 +340,13 @@ function demoteCardContent(card, subquestions, level) {
     // list is loaded, so the slug below lands on real options.
     setQuestionType(demotedCard, typeId);
     if (typeId === 'document') {
+        // dataset.appSlug is the pending slug while the apps list is
+        // still loading (edit-mode populate); prefer the picked value.
+        const parentSelect = card.querySelector('.question-doc-app');
+        const slug = parentSelect.value || parentSelect.dataset.appSlug || '';
         const slugSelect = demotedCard.querySelector('.question-doc-app');
-        slugSelect.value = card.querySelector('.question-doc-app').value;
-        slugSelect.dataset.appSlug = slugSelect.value;
+        slugSelect.value = slug;
+        slugSelect.dataset.appSlug = slug;
         updateDocStatus(slugSelect);
     }
 
@@ -338,7 +455,9 @@ function populateBuilderFromFlat(flatQuestions) {
             const slug = (q.data && q.data.slug) || '';
             appSelect.dataset.appSlug = slug;   // kept until apps load
             appSelect.value = slug;
-            ensureAppsLoaded().catch(() => {});
+            // Once the options exist, show what's embedded in the status.
+            loadAppsAndTrack().then(() => updateDocStatus(appSelect))
+                .catch(() => {});
         }
 
         stack.push({ depth, card });
@@ -547,8 +666,8 @@ function collectValidatedQuestions() {
     const badDoc = questions.find(q =>
         q.type === 'document' && !q.data.slug);
     if (badDoc) {
-        alert(`Question ${badDoc.id}: choose a deployed app to embed. `
-              + 'Apps are uploaded on campus-apphost.');
+        alert(`Question ${badDoc.id}: no app embedded — click `
+              + 'Embed Existing App or Upload App on the question.');
         return null;
     }
 

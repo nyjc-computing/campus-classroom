@@ -58,6 +58,9 @@ const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
 // server-side like the student answer sheet; empty when the embed
 // origin is not configured (previews degrade to a notice).
 const EMBED_URLS = {{ embed_urls | tojson }};
+// Origin of the campus-apphost (embed) deployment: hosts the Upload App
+// flow and the publisher's My Apps list; null hides those links.
+window.APPHOST_ORIGIN = {{ embed_origin | tojson }};
 let assignment = null;
 let editing = false;
 
