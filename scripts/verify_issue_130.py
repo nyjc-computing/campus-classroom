@@ -199,6 +199,9 @@ def static_checks():
     check("review page no longer client-fetches the creator-only assignment API",
           "fetch(`/api/v1/assignments/" not in src_view
           and "assignment_questions" in src_view)
+    check("group test parents dotted children, not the reverse (#134)",
+          "p.id.startsWith(q.id + '.')" in src_view
+          and "q.id.startsWith(p.id + '.')" not in src_view)
     check("inbox filter widens to taught courses",
           "TAUGHT_COURSE_IDS" in src_list and "isReviewable" in src_list)
     check("inbox route degrades taught set to own-only on bridge failure",
