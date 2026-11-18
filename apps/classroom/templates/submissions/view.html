@@ -121,8 +121,12 @@ function renderGroupNode(q) {
     `;
 }
 
+// A group node PARENTS dotted children (#119); detected by children —
+// not empty text — so an unsupported type still renders its notice path
+// (#62). The direction was backwards until #134: the old test marked
+// every subpart a passage (bare ids, no answers) and the parent a leaf.
 function isGroupNode(q) {
-    return assignment.questions.some(p => q.id.startsWith(p.id + '.'));
+    return assignment.questions.some(p => p.id.startsWith(q.id + '.'));
 }
 
 function renderQuestionWithResponse(q, submission) {
