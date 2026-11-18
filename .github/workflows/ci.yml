@@ -69,3 +69,5 @@ jobs:
           assert "/" in rules, "landing route missing"
           print(f"App OK: {len(rules)} routes registered")
           EOF
+      - name: Template invariants (novalidate on JS-handled forms, #128)
+        run: poetry run python tests/test_template_invariants.py
