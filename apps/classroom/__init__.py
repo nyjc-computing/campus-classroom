@@ -35,7 +35,7 @@ def create_app():
     # flag is a redeploy, not a runtime change. Ingestion is async and
     # fail-safe: a missing or broken audit key only loses spans.
     if env.get_flag("AUDIT_TRACING_ENABLED", False):
-        from campus.audit.middleware import init_app as init_audit_tracing
+        from campus.flask_campus.audit import init_tracing as init_audit_tracing
 
         init_audit_tracing(app)
 
@@ -47,7 +47,7 @@ def create_app():
     # and SDK calls forward them. The @flask_campus.journey decorator
     # names action boundaries as routes warrant.
 
-    from campus.audit.middleware import init_journeys
+    from campus.flask_campus.audit import init_journeys
 
     init_journeys(app)
 
