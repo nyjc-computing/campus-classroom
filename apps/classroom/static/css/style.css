@@ -272,3 +272,42 @@ textarea.autosize {
     overflow-y: auto;
     resize: none;
 }
+
+/* Markdown-rendered staff text (prompts, passages, question text,
+   descriptions — text_render.py / static/js/markdown.js). Blocks get
+   normal flow; keep trailing space tight inside padded cards. */
+.md-body {
+    overflow-wrap: break-word;
+}
+.md-body p:last-child,
+.md-body ul:last-child,
+.md-body ol:last-child {
+    margin-bottom: 0;
+}
+.md-body ul, .md-body ol {
+    margin-bottom: 0.5rem;
+    padding-left: 1.5rem;
+}
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+    font-size: 1em;
+    margin: 0.75rem 0 0.25rem;
+}
+.md-body code {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.1rem 0.25rem;
+    border-radius: 0.25rem;
+}
+.md-body pre {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+}
+.md-body pre code {
+    background: none;
+    padding: 0;
+}
+.md-body blockquote {
+    border-left: 3px solid #dee2e6;
+    padding-left: 0.75rem;
+    color: #6c757d;
+}

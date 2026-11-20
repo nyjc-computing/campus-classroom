@@ -115,6 +115,13 @@ def create_app():
 
     app.jinja_env.filters["timestamp"] = timestamp
 
+    # Staff-authored markdown (prompts, passages, question text,
+    # descriptions) renders on the display surfaces; escape-first, see
+    # text_render.
+    from .text_render import render_markdown
+
+    app.jinja_env.filters["md"] = render_markdown
+
     # Embed deployments render the same templates but only serve the
     # /apps/ surface, so base.html swaps the Classroom navbar (whose
     # routes are gated 404 there) for the apphost one.

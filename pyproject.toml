@@ -14,6 +14,10 @@ flask = "^3.0.0"
 # WSGI server (Procfile) - was transitive via campus-suite until #993
 gunicorn = "^26.2.0"
 python-dotenv = "^1.2.1"
+# Staff-authored prompt/passage/description markdown (text_render.py)
+markdown = "^3.7"
+# Post-parse HTML sanitizer for that markdown (nh3 = ammonia bindings)
+nh3 = "^0.2"
 
 # Campus internal dependencies
 campus-api-python = {url = "https://github.com/nyjc-computing/campus-api-python/releases/download/v0.10.9/campus_api_python-0.10.9-py3-none-any.whl"}
