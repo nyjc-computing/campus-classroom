@@ -51,6 +51,9 @@
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script src="{{ url_for('static', filename='js/question-builder.js') }}"></script>
 <script src="{{ url_for('static', filename='js/doc-embed.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/markdown.js') }}"></script>
 <script>
 const assignmentId = {{ assignment_id | tojson }};
 const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
@@ -125,7 +128,7 @@ function renderViewMode() {
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <h2>${escapeHtml(assignment.title)}</h2>
                 </div>
-                ${assignment.description ? `<p class="text-muted text-verbatim">${escapeHtml(assignment.description)}</p>` : ''}
+                ${assignment.description ? `<div class="text-muted md-body">${campusMarkdown(assignment.description)}</div>` : ''}
 
                 ${isLocked() ? `
                     <div class="alert alert-info">
@@ -264,8 +267,8 @@ function renderQuestion(q) {
     return `
         <div class="question-item mb-3 p-3" style="margin-left: ${indent}px">
             <strong>${escapeHtml(q.id)}</strong> ${typeBadge}
-            ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
-            ${q.question ? `<p class="text-verbatim">${escapeHtml(q.question)}</p>` : ''}
+            ${q.prompt ? `<div class="text-muted small mb-2 md-body">${campusMarkdown(q.prompt)}</div>` : ''}
+            ${q.question ? `<div class="mb-2 md-body">${campusMarkdown(q.question)}</div>` : ''}
             ${q.type === 'document' ? renderDocEmbed(q) : ''}
         </div>
     `;

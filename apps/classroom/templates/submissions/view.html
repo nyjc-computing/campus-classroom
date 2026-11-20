@@ -17,6 +17,9 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/markdown.js') }}"></script>
 <script>
 const submissionId = {{ submission_id | tojson }};
 // Read-only for every viewer (#104, #130): the owning student (arriving
@@ -116,7 +119,7 @@ function renderGroupNode(q) {
     return `
         <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
             <strong>${escapeHtml(q.id)}</strong>
-            ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
+            ${q.prompt ? `<div class="text-muted small mb-2 md-body">${campusMarkdown(q.prompt)}</div>` : ''}
         </div>
     `;
 }
@@ -145,8 +148,8 @@ function renderQuestionWithResponse(q, submission) {
         <div class="question-item mb-4 p-3" style="margin-left: ${indent}px">
             <div>
                 <strong>${escapeHtml(q.id)}</strong>
-                ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
-                <p class="mb-2 text-verbatim">${escapeHtml(q.question)}</p>
+                ${q.prompt ? `<div class="text-muted small mb-2 md-body">${campusMarkdown(q.prompt)}</div>` : ''}
+                <div class="mb-2 md-body">${campusMarkdown(q.question)}</div>
             </div>
 
             <div class="response-box">
@@ -202,8 +205,8 @@ function renderDocumentResponse(q, submission) {
             <div>
                 <strong>${escapeHtml(q.id)}</strong>
                 <span class="badge text-bg-light border ms-1">Interactive document</span>
-                ${q.prompt ? `<p class="text-muted small mb-2 text-verbatim">${escapeHtml(q.prompt)}</p>` : ''}
-                <p class="mb-2 text-verbatim">${escapeHtml(q.question)}</p>
+                ${q.prompt ? `<div class="text-muted small mb-2 md-body">${campusMarkdown(q.prompt)}</div>` : ''}
+                <div class="mb-2 md-body">${campusMarkdown(q.question)}</div>
             </div>
 
             <div class="response-box">
