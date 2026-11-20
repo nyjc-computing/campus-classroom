@@ -167,13 +167,15 @@ _BROKER_ASKABLE = (
 )
 
 # campus-profile origins (the integrations/connect host). development is
-# the Railway dev deployment; staging/production follow the campus-suite
-# service naming. CAMPUS_PROFILE_URL overrides explicitly.
+# the Railway dev deployment; staging/production ride the production
+# Railway host — the campus.nyjc.dev/.app subdomains this map once
+# guessed were never provisioned in DNS (NXDOMAIN, probed 2026-11-20).
+# CAMPUS_PROFILE_URL overrides explicitly.
 _PROFILE_DEVELOPMENT_URL = "https://campus-profile-development.up.railway.app"
 _PROFILE_URLS = {
     "development": _PROFILE_DEVELOPMENT_URL,
-    "staging": "https://campus-profile.campus.nyjc.dev",
-    "production": "https://campus-profile.campus.nyjc.app",
+    "staging": "https://campus-profile.up.railway.app",
+    "production": "https://campus-profile.up.railway.app",
 }
 
 
