@@ -28,7 +28,13 @@ from typing import Iterator
 
 import campus_python
 import flask
-from campus_python.errors import AccessDeniedError, AuthenticationError
+from campus_python.errors import (
+    AccessDeniedError,
+    AuthenticationError,
+    RateLimitExceededError,
+    ServerError,
+    UnavailableError,
+)
 from campus_python.errors import APIError as CampusAPIError
 
 from . import classroom_auth as cauth
@@ -83,14 +89,26 @@ def user_session() -> Iterator[campus_python.Campus]:
     invalid_grant error a dead grant produces, and one immediate retry
     papers over the transient case — a grant that is genuinely gone
     fails the retry too, and re-authentication remains the remedy.
+
+    A reauth-shaped failure raised by the CALLER'S BODY (after the
+    mint already succeeded — e.g. a sessions:read denial from an SDK
+    call) must NOT take the retry path: contextlib forbids a second
+    yield after throw(), so the retry would turn the error into a
+    `RuntimeError: generator didn't stop after throw()` 500. Re-raising
+    as CampusSessionExpiredError keeps the #98 contract instead (#139
+    harness found this latent path).
     """
     campus = flask.current_app.campus
+    body_entered = False
     try:
         with campus.with_user_session() as client:
+            body_entered = True
             yield client
     except CampusAPIError as err:
         if not is_reauth_required(err):
             raise
+        if body_entered:
+            raise cauth.CampusSessionExpiredError() from err
         logger.warning(
             "Campus grant mint rejected (%s: %s); retrying once before "
             "treating the session as expired (#98)",
@@ -105,4 +123,89 @@ def user_session() -> Iterator[campus_python.Campus]:
             raise
 
 
-__all__ = ["is_reauth_required", "user_session"]
+def register_error_handlers(app: flask.Flask) -> None:
+    """No Campus API failure may surface as a raw 500 (#139).
+
+    The 2026-11-22 prod incident: a student's submission create died on
+    the missing `submissions.admin` circle grant as an uncaught
+    AccessDeniedError — Flask 500 HTML, so the answer sheet's
+    `formatApiError({})` had nothing to show but its generic "Could not
+    start your submission" fallback. The friendly message lives HERE,
+    not per-route: every surface (student /a/ writes, staff pages, and
+    flask_campus hook-phase failures like #126's context-push denials —
+    those funnel through Flask's handle_exception too) gets the same
+    contract, and `formatApiError` already surfaces server messages.
+
+    Runs LAST in the error pipeline: reauth-shaped errors became
+    CampusSessionExpiredError inside user_session() (#98) and routes
+    translate their own not-founds, so what lands here is genuinely
+    unexpected. Reauth-shaped errors are still honoured if one escapes
+    the seam (direct with_user_session calls, hook phase).
+    """
+
+    @app.errorhandler(CampusAPIError)
+    def handle_campus_api_error(err: CampusAPIError):
+        wants_json = (
+            flask.request.path.startswith("/api/")
+            or flask.request.accept_mimetypes.best == "application/json"
+        )
+        if is_reauth_required(err):
+            # Mirror the #98 contract: the remedy is a fresh Campus
+            # sign-in, not a retry or a grant request.
+            expired = cauth.CampusSessionExpiredError()
+            if wants_json:
+                return flask.jsonify(
+                    {"error": {"code": expired.code, "message": expired.message}}
+                ), 401
+            flask.flash(expired.message, "warning")
+            return flask.redirect(
+                flask.url_for("auth.login",
+                              next=flask.request.full_path.rstrip("?"))
+            )
+
+        if isinstance(err, AccessDeniedError):
+            code = "campus_access_denied"
+            status = 403
+            message = (
+                "Campus denied this action for your account (missing "
+                "access grant). If you think you should have access, "
+                "sign in again, or ask your teacher or a Campus admin "
+                "to grant it."
+            )
+        elif isinstance(err, RateLimitExceededError):
+            code = "campus_rate_limited"
+            status = 429
+            message = "Too many requests — wait a moment and try again."
+        elif isinstance(err, (ServerError, UnavailableError)):
+            code = "campus_api_unavailable"
+            status = 502
+            message = "Campus is having a problem right now — try again in a moment."
+        else:
+            code = f"campus_{(err.error or 'api_error').lower()}"
+            status = err.status_code if 400 <= err.status_code < 600 else 502
+            message = err.error_description or _error_text(err) or "Campus API error"
+
+        app.logger.warning(
+            "Campus API error on %s %s: %s (%s, status=%s, request_id=%s)",
+            flask.request.method, flask.request.path,
+            _error_text(err), err.error, err.status_code, err.request_id,
+        )
+        if wants_json:
+            payload: dict = {"error": {"code": code, "message": message}}
+            if err.request_id:
+                payload["error"]["request_id"] = err.request_id
+            field_errors = getattr(err, "errors", None)
+            if field_errors:
+                payload["error"]["errors"] = [
+                    {"field": fe.field, "code": fe.code, "message": fe.message}
+                    for fe in field_errors
+                ]
+            return flask.jsonify(payload), status
+
+        flask.flash(message, "danger")
+        return flask.redirect(
+            flask.request.referrer or flask.url_for("index")
+        )
+
+
+__all__ = ["is_reauth_required", "register_error_handlers", "user_session"]
