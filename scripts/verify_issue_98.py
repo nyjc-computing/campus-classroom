@@ -17,8 +17,9 @@ client is faked at the session seams:
 3. The /a/ answer sheet redirects browser paths into
    /login?next=<path+query> — including the ?course= pin — instead of
    flashing onto the Classroom-connection page; the app-scope
-   fallback path redirects too; a non-invalid_grant SDK failure still
-   surfaces as a 500 (behavior preserved).
+   fallback path redirects too; a non-invalid_grant SDK failure
+   surfaces as honest JSON via the #139 handler, never a re-auth
+   masquerade.
 4. The auth-bridge seam: a broker release whose user-session mint
    fails invalid_grant raises CampusSessionExpiredError (re-login),
    not BrokerConfigError ("deployment configuration problem").
@@ -120,6 +121,9 @@ ASSIGNMENTS = {
             SimpleNamespace(course_id="course-1", coursework_id="cw-1"),
         ],
         created_at="2026-11-09T00:00:00Z",
+        # submission_view passes questions through to the template via
+        # to_resource() (server-side payload, post-#99 template work).
+        to_resource=lambda: {"questions": []},
     ),
 }
 
@@ -294,7 +298,9 @@ check("/a/ with app scope down + dead grant -> still a /login redirect",
 app.campus = FAKE_CAMPUS
 
 # A non-invalid_grant failure from the mint is still an unexpected
-# error: it must keep surfacing as a 500, not masquerade as re-auth.
+# error: it must NOT masquerade as re-auth — the #139 handler answers
+# honest passthrough JSON (SDK status + code), never 401
+# campus_session_expired.
 class OtherErrorCampus(FakeCampus):
     @contextmanager
     def with_user_session(self):
@@ -305,9 +311,12 @@ class OtherErrorCampus(FakeCampus):
 
 app.campus = OtherErrorCampus(ASSIGNMENTS)
 r = client.post("/api/v1/submissions/uid-submission-1/submit", json={})
-check("non-invalid_grant mint failure -> still 500 (behavior preserved)",
-      r.status_code == 500,
-      f"status={r.status_code}")
+payload = r.get_json(silent=True) or {}
+check("non-invalid_grant mint failure -> honest #139 JSON, not re-auth",
+      r.status_code == 400
+      and payload.get("error", {}).get("code") == "campus_invalid_request"
+      and payload.get("error", {}).get("message") == "Invalid client",
+      f"status={r.status_code} payload={payload}")
 app.campus = FAKE_CAMPUS
 
 

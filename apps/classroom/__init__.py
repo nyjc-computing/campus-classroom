@@ -148,6 +148,13 @@ def create_app():
     routes.classroom_sync.register_routes(app, login_manager)
     routes.documents.register_routes(app, login_manager)
 
+    # Last-resort translation of Campus API failures into JSON/flash
+    # responses (#139): a denied gated write (e.g. a student without the
+    # submissions.admin circle grant) must surface as a friendly 403,
+    # never a raw 500 the answer sheet can only render as its bare
+    # fallback banner.
+    campus_session.register_error_handlers(app)
+
     # campus-apphost containment (#81): a deployment running EMBED_MODE=1
     # is the dedicated app-hosting origin (campus-apphost) — it serves
     # the /apps/ surface (landing page, /apps/publish, /apps/embed) plus
