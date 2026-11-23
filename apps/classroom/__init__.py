@@ -380,7 +380,9 @@ def create_app():
     # Classroom course the assignment is linked to (enrollment via the auth
     # bridge); anyone else gets a 403 gate page with no assignment content.
     # A signed-in visitor without a google.classroom connection gets a
-    # connect prompt (deny + CTA) instead of the bare gate.
+    # connect prompt (deny + CTA) instead of the bare gate, and a student
+    # whose connection predates the #104 mirror scope gets the reconnect
+    # variant of the same prompt (the submit-time turn-in needs it).
     #
     # #14: for an enrolled student the page is also the answer sheet —
     # questions render with an answer form backed by the submissions API
@@ -429,16 +431,42 @@ def create_app():
             # Non-owner: rule 2's assigned-student render. The enrollment
             # check is fail-closed — bridge errors propagate to the
             # app-wide handler (browser paths land on the connection
-            # page), except NotConnectedError, which gets the inline
-            # connect prompt.
+            # page), except the reconnectable pair, which gets the
+            # inline connect prompt on this page.
             try:
-                courses = enrollment.enrolled_courses(assignment)
+                if enrollment.can_review(assignment, flask.g.user.id):
+                    # Staff previewing a course they teach: the mirror
+                    # scope drives student-only verbs, so the staff
+                    # demand stays MVP-only.
+                    courses = enrollment.enrolled_courses(assignment)
+                else:
+                    # The visitor is the mirroring student (#104): the
+                    # submit-time turn-in runs on THEIR credential, so
+                    # demand the coursework.me grant here — a credential
+                    # minted before the campus#1095 cap widening routes
+                    # through the reconnect CTA instead of reaching a
+                    # submit whose Classroom mirror would silently skip.
+                    courses = enrollment.enrolled_courses(
+                        assignment,
+                        extra_required_scopes=cauth.CLASSROOM_SCOPES_MIRROR,
+                    )
             except cauth.NotConnectedError:
                 return flask.render_template(
                     "assignments/share_connect.html",
                     profile_integrations_url=(
                         f"{cauth.profile_integrations_url()}/profile/integrations"
                     ),
+                ), 403
+            except cauth.MissingClassroomScopesError:
+                # The connection predates the scope: the same deny+CTA
+                # page, reconnect-flavored (the connect flow asks for
+                # exactly the vault cap, which now carries the scope).
+                return flask.render_template(
+                    "assignments/share_connect.html",
+                    profile_integrations_url=(
+                        f"{cauth.profile_integrations_url()}/profile/integrations"
+                    ),
+                    reconnect_reason="scope",
                 ), 403
             if not courses:
                 return flask.render_template("assignments/share_gated.html"), 403
