@@ -202,6 +202,14 @@ class FakeAssignment:
         self.questions = []
         self.classroom_links = classroom_links or []
 
+    def to_resource(self):
+        # The submission view renders the assignment payload server-side
+        # (post-#119 era) — the fake must satisfy it.
+        return {
+            "id": self.id, "title": self.title,
+            "created_by": self.created_by, "questions": [],
+        }
+
 
 class FakeSubmission:
     def __init__(self, id, assignment_id, student_id, course_id="course-1"):

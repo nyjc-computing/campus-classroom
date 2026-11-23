@@ -34,7 +34,8 @@ into a "not enrolled" answer):
 
 - `NotConnectedError`: the user has not connected google.classroom —
   callers offer the campus-profile connect prompt.
-- `MissingClassroomScopesError`: the grant lacks `courses.readonly` —
+- `MissingClassroomScopesError`: the grant lacks a demanded scope
+  (`courses.readonly` — or, on the /a/ path, the #104 mirror scope) —
   reconnect guidance.
 - `ClassroomAPIError` / `OAuthFlowError`: Classroom unreachable —
   surfaced (browser paths redirect to the connection page, API paths
@@ -70,16 +71,24 @@ def linked_course_ids(assignment) -> set[str]:
     }
 
 
-def _cached_courses(scope: str, *, taught_only: bool) -> dict[str, str]:
+def _cached_courses(
+        scope: str, *, taught_only: bool,
+        required_scopes: tuple[str, ...] = (COURSES_READONLY_SCOPE,),
+) -> dict[str, str]:
     """`user_courses`/`taught_courses` through a short per-user cache.
 
     Cache key carries the campus user id (the cache is process-wide and
     gunicorn serves many users concurrently — a userless key would leak
-    one teacher's courses to another). Outside a request (fixtures) there
-    is no identity to key on: skip the cache entirely.
+    one teacher's courses to another) AND the demanded scope set: a
+    success cached for the MVP-only demand must never satisfy a wider
+    demand (the /a/ mirror gate would silently stop demanding the
+    scope). Outside a request (fixtures) there is no identity to key
+    on: skip the cache entirely.
     """
     try:
-        cache_key = f"{flask.g.user.id}:{scope}"
+        cache_key = (
+            f"{flask.g.user.id}:{scope}:{','.join(sorted(required_scopes))}"
+        )
     except (RuntimeError, AttributeError):
         cache_key = None
     if cache_key:
@@ -87,7 +96,7 @@ def _cached_courses(scope: str, *, taught_only: bool) -> dict[str, str]:
         if hit and hit[0] > time.monotonic():
             return hit[1]
     with cauth.with_classroom_session(
-            required_scopes=(COURSES_READONLY_SCOPE,)) as classroom:
+            required_scopes=required_scopes) as classroom:
         courses = {
             course["id"]: course.get("name") or course["id"]
             for course in classroom.courses_list(
@@ -100,13 +109,22 @@ def _cached_courses(scope: str, *, taught_only: bool) -> dict[str, str]:
     return courses
 
 
-def user_courses() -> dict[str, str]:
+def user_courses(*, extra_required_scopes: tuple[str, ...] = ()) -> dict[str, str]:
     """The signed-in user's Google Classroom courses (id → name).
 
     Courses they are in as student or teacher — the rule 2/3/4 membership
     set. Raises the classroom_auth errors listed in the module docstring.
+
+    `extra_required_scopes` widens the credential demand beyond
+    `courses.readonly` (the /a/ answer sheet adds the #104 mirror scope
+    so a stale credential reconnects before the submit whose turn-in
+    would otherwise silently skip); every missing scope raises
+    MissingClassroomScopesError as usual.
     """
-    return _cached_courses("any", taught_only=False)
+    return _cached_courses(
+        "any", taught_only=False,
+        required_scopes=(COURSES_READONLY_SCOPE, *extra_required_scopes),
+    )
 
 
 def taught_courses() -> dict[str, str]:
@@ -150,15 +168,18 @@ def can_review(assignment, user_id) -> bool:
     return teaches_linked_course(assignment)
 
 
-def enrolled_courses(assignment) -> list[dict]:
+def enrolled_courses(
+        assignment, *, extra_required_scopes: tuple[str, ...] = (),
+) -> list[dict]:
     """Courses the signed-in user shares with this assignment.
 
     Ordered by the assignment's classroom_links (the teacher's send
     order), each as {"course_id", "name"} — the share page keys a
     submission to one of these. Empty when the user is in none of them
-    or the assignment has no classroom_links at all.
+    or the assignment has no classroom_links at all. See `user_courses`
+    for `extra_required_scopes`.
     """
-    mine = user_courses()
+    mine = user_courses(extra_required_scopes=extra_required_scopes)
     seen: dict[str, None] = {}
     for link in (getattr(assignment, "classroom_links", None) or []):
         course_id = getattr(link, "course_id", None)

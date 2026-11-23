@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% set reason = reconnect_reason|default('') %}
+
 {% block title %}Connect Google Classroom{% endblock %}
 
 {% block content %}
@@ -7,6 +9,16 @@
     <div class="card mx-auto" style="max-width: 34rem;">
         <div class="card-body text-center py-5">
             <i class="bi bi-link-45deg display-5 text-muted mb-3"></i>
+            {% if reason == 'scope' %}
+            <h3 class="mb-3">One more Google Classroom permission needed</h3>
+            <p class="text-muted mb-4">
+                Campus Classroom now turns your work in on Google
+                Classroom when you submit, and that needs one extra
+                permission your connection was created before it
+                existed. Reconnect your school Google account, then
+                reopen this page.
+            </p>
+            {% else %}
             <h3 class="mb-3">Connect your Google Classroom first</h3>
             <p class="text-muted mb-4">
                 Assignment content is shared through Google Classroom
@@ -14,6 +26,7 @@
                 Google Classroom connection yet. Connect your school
                 Google account once, then reopen this page.
             </p>
+            {% endif %}
             <a href="{{ profile_integrations_url }}"
                target="_blank" rel="noopener"
                class="btn btn-primary mb-2">
