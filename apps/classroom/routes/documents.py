@@ -18,7 +18,10 @@ session cookie (different origin), so auth is the short-lived HMAC
 token the share page minted into the iframe URL.
 """
 
+import math
+
 import flask
+from campus import flask_campus
 
 from .. import campus_session, documents, enrollment
 
@@ -111,6 +114,7 @@ def register_routes(app: flask.Flask, login_manager):
             "apps_myapps.html",
             apps=apps,
             deployed=flask.request.args.get("deployed"),
+            updated=flask.request.args.get("updated"),
         )
 
     @app.get("/apps/add")
@@ -128,6 +132,41 @@ def register_routes(app: flask.Flask, login_manager):
         if not documents.embed_mode():
             flask.abort(404)
         return flask.render_template("apps_add.html")
+
+    @app.get("/apps/edit/<slug>")
+    @login_manager.login_required
+    def apps_edit(slug: str, **_):
+        """Edit page for one of the signed-in publisher's own apps (#142).
+
+        Owns-only: a signed-in user who does not own the slug gets the
+        same 404 as an unknown slug, so the surface does not reveal
+        which slugs other publishers hold. The form PATCHes
+        /api/v1/apps/<slug> — a display-name edit, a replacement HTML
+        upload, or a slug move (re-publish under a new address, the
+        registry's sanctioned rename, since slugs are immutable
+        upstream by design).
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        user_id = flask.g.user.id
+        with campus_session.user_session() as client:
+            try:
+                app_record = client.api.hostedapps.get_meta(slug)
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    flask.abort(404)
+                raise
+            if (str(getattr(app_record, "uploaded_by_user_id", ""))
+                    != str(user_id)):
+                flask.abort(404)
+        # Route-computed: a child-template set is invisible inside
+        # blocks, and both the page copy and the drop-zone JS need it.
+        size_kb = max(1, math.ceil((app_record.size or 0) / 1024))
+        return flask.render_template(
+            "apps_edit.html",
+            app_record=app_record,
+            size_kb=size_kb,
+        )
 
     @app.get("/apps/new")
     @login_manager.login_required
@@ -213,6 +252,138 @@ def register_routes(app: flask.Flask, login_manager):
             "replaced": replaced,
             "updated_at": meta.updated_at,
         }), (200 if replaced else 201)
+
+    @app.patch("/api/v1/apps/<slug>")
+    @login_manager.login_required
+    # The action culminates in campus.api's hostedapps yapper emissions
+    # (campus.hostedapps.update for an in-place edit; a slug move is a
+    # new + delete pair) — the journey names the whole episode.
+    @flask_campus.journey("campus.hostedapps.update")
+    def api_update_app(slug: str, **_):
+        """Update one of the caller's own apps (#142).
+
+        Request body: {name?: str, slug?: str, html?: str,
+        remove_old_slug?: bool} — every field optional:
+
+        - name: new display name (blank/absent keeps the stored one;
+          the registry has no way to clear a name back to None).
+        - html: replacement single-file document; absent keeps the
+          current content (a name-only or move-only update re-PUTs the
+          stored bytes — the registry only writes through the by-slug
+          upsert).
+        - slug: move the app to a new address. Slugs are immutable
+          upstream, so a move is re-publish under the new slug (same
+          content/name) and optionally remove the old record —
+          assignments referencing the OLD slug break either way, which
+          the edit page warns about before saving. Moves target an
+          UNUSED slug (409 otherwise): a move must never silently
+          replace someone else's app.
+        - remove_old_slug: with slug, also delete the old record after
+          the new one is in place (default false — the copy stays).
+
+        Owner-gated: only the publishing user may edit (403), and a
+        foreign slug 404s like the edit page. Only on the apphost
+        deployment (EMBED_MODE=1).
+        """
+        if not documents.embed_mode():
+            flask.abort(404)
+        data = flask.request.get_json(silent=True) or {}
+
+        name = str(data.get("name") or "").strip() or None
+        new_slug_raw = str(data.get("slug") or "").strip()
+        html = data.get("html")
+        remove_old = bool(data.get("remove_old_slug"))
+
+        with campus_session.user_session() as client:
+            try:
+                record = client.api.hostedapps.get_meta(slug)
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "App not found."}), 404
+                raise
+            if (str(getattr(record, "uploaded_by_user_id", ""))
+                    != str(flask.g.user.id)):
+                return flask.jsonify({
+                    "error": "Only the app's publisher can edit it.",
+                }), 403
+
+            current_slug = record.slug
+            target_slug = (
+                documents.sanitize_app_slug(new_slug_raw)
+                if new_slug_raw else current_slug
+            )
+            if new_slug_raw and not target_slug:
+                return flask.jsonify({
+                    "error": "Provide a slug (lowercase letters, numbers, "
+                             "dots, dashes)."
+                }), 400
+            moved = target_slug != current_slug
+            content_replaced = html is not None
+            name_changed = name is not None and name != record.name
+
+            if not moved and not content_replaced and not name_changed:
+                return flask.jsonify({"error": "Nothing to update."}), 400
+
+            if moved:
+                try:
+                    client.api.hostedapps.get_meta(target_slug)
+                except Exception as e:
+                    if "not found" not in str(e).lower():
+                        raise
+                else:
+                    return flask.jsonify({
+                        "error": f"An app already exists at {target_slug} — "
+                                 "a move needs an unused slug.",
+                    }), 409
+
+            if content_replaced:
+                html = str(html)
+                if not html.strip() or "<" not in html:
+                    return flask.jsonify({
+                        "error": "The app must be a non-empty HTML document."
+                    }), 400
+                if len(html) > documents.MAX_DOCUMENT_CHARS:
+                    return flask.jsonify(
+                        {"error": "The app exceeds the 2 MB limit."}), 400
+                content: bytes | str = html
+                content_type = "text/html"
+            else:
+                content = client.api.hostedapps.get_content(current_slug)
+                content_type = record.content_type or "text/html"
+
+            # The display name rides every write: in-place replaces keep
+            # the stored name otherwise, and a move creates a fresh
+            # record that would drop it.
+            put_name = name if name is not None else (record.name or None)
+            meta = client.api.hostedapps.put_by_slug(
+                target_slug, content, content_type=content_type,
+                name=put_name,
+            )
+
+            old_slug_removed = False
+            warning = None
+            if moved and remove_old:
+                try:
+                    client.api.hostedapps.delete_by_slug(current_slug)
+                    old_slug_removed = True
+                except Exception as e:
+                    # The move itself succeeded; report the leftover
+                    # rather than failing the whole update.
+                    warning = (
+                        f"The app now lives at {target_slug}, but removing "
+                        f"the old {current_slug} failed ({e})."
+                    )
+
+        return flask.jsonify({
+            "slug": meta.slug,
+            "name": meta.name or put_name or meta.slug,
+            "moved": moved,
+            "old_slug": current_slug if moved else None,
+            "old_slug_removed": old_slug_removed,
+            "content_replaced": content_replaced,
+            "updated_at": meta.updated_at,
+            **({"warning": warning} if warning else {}),
+        }), 200
 
     @app.get("/apps/embed/<assignment_id>/<question_id>")
     def embed_document(assignment_id: str, question_id: str):

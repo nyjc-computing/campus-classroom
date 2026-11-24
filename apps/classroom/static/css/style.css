@@ -311,3 +311,24 @@ textarea.autosize {
     padding-left: 0.75rem;
     color: #6c757d;
 }
+
+/* App-file drop zone (apps_add / apps_edit publisher forms, #142):
+   click or drop a single-file HTML app onto it. Flask static has no
+   cache-busting — bump this comment when the rules change. */
+.app-dropzone {
+    border: 2px dashed #ced4da;
+    border-radius: 0.375rem;
+    padding: 1.25rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+.app-dropzone:hover,
+.app-dropzone:focus-visible {
+    border-color: #adb5bd;
+    background-color: rgba(0, 0, 0, 0.02);
+}
+.app-dropzone.dragover {
+    border-color: #0d6efd;
+    background-color: rgba(13, 110, 253, 0.06);
+}
