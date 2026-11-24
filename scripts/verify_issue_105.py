@@ -38,13 +38,23 @@ Usage: .venv/Scripts/python.exe scripts/verify_issue_105.py
 """
 
 import os
+import sys
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
+
+# Repo root FIRST on sys.path (worktree trap: a borrowed venv resolves
+# apps.classroom to the main checkout via its editable install).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Test environment must be in place before apps.classroom imports (its
 # load_dotenv() does not override variables that are already set).
+# CLIENT_ID/CLIENT_SECRET dummies keep create_app() happy in worktrees
+# without a checkout .env; no network happens at construction time.
 os.environ["PUBLIC_URL"] = "http://localhost:5000"
 os.environ["SECRET_KEY"] = "verify-issue-105-secret"
+os.environ.setdefault("CLIENT_ID", "verify-client-id")
+os.environ.setdefault("CLIENT_SECRET", "verify-client-secret")
 
 import campus.flask_campus.context as flask_context  # noqa: E402
 import campus_python  # noqa: E402
@@ -67,6 +77,10 @@ GRANT_SCOPES = list(cauth.CLASSROOM_SCOPES_MVP)
 # --- fake Classroom backend ---------------------------------------------------
 
 COURSES_BY_EMAIL: dict[str, list[dict]] = {}
+# Courses each user TEACHES (courses.list with teacherId=me — the
+# fake must honor the filter or students appear as reviewers, which
+# drifted the by-assignment ACL checks).
+TAUGHT_BY_EMAIL: dict[str, list[dict]] = {}
 # (course_id, coursework_id) -> scripted CourseWork record (state DRAFT
 # vs ASSIGNED is the dashboard badge's input).
 COURSEWORK_BY_ID: dict[tuple[str, str], dict] = {}
@@ -81,7 +95,19 @@ def _fake_classroom_request(self, method, path, *, params=None, json=None):  # n
     global FAIL_COURSEWORK
     if path == "v1/courses":
         email = self._creds["email"]
+        if params and params.get("teacherId") == "me":
+            return {"courses": TAUGHT_BY_EMAIL.get(email, [])}
         return {"courses": COURSES_BY_EMAIL.get(email, [])}
+    if path.endswith("/students") and method == "GET":
+        # courses.students.list (the #105 roster join)
+        course_id = path.split("/")[2]
+        return {"students": ROSTER_BY_COURSE.get(course_id, [])}
+    if path.endswith("/studentSubmissions") and method == "GET":
+        # studentSubmissions.list WITHOUT userId (the #105 staff view:
+        # every student's row on one CourseWork)
+        parts = path.split("/")
+        key = (parts[2], parts[4])
+        return {"studentSubmissions": GC_ROWS_BY_KEY.get(key, [])}
     if "/courseWork/" in path and method == "GET":
         # v1/courses/<course>/courseWork/<coursework>
         parts = path.split("/")
@@ -106,6 +132,8 @@ class FakeBroker:
 
     def token(self, provider, integration, *, min_scopes=None):  # noqa: ARG002
         assert (provider, integration) == ("google", "classroom")
+        if CURRENT_EMAIL in NOT_CONNECTED_EMAILS:
+            raise cauth.NotConnectedError()
         return {
             "provider": "google.classroom",
             "user_id": CURRENT_EMAIL,
@@ -256,6 +284,13 @@ ASSIGNMENTS = {
     "a-student": FakeAssignment(
         "a-student", STUDENT, "Student's own practice", "2026-11-08T00:00:00Z",
     ),
+    "a-nc": FakeAssignment(
+        "a-nc", "uid-user-teacher2", "Degradation fixture",
+        "2026-11-07T00:00:00Z",
+        classroom_links=[SimpleNamespace(
+            course_id="course-nc", coursework_id="cw-nc",
+            attachment_id=None)],
+    ),
 }
 
 SUBMISSIONS = {
@@ -283,11 +318,36 @@ FAKE_CAMPUS = FakeCampus(ASSIGNMENTS, SUBMISSIONS)
 for email_user in (TEACHER, STUDENT, STUDENT2):
     COURSES_BY_EMAIL[f"{email_user}@nyjc.edu.sg"] = [
         {"id": "course-1", "name": "17S1-CSC"}]
+TAUGHT_BY_EMAIL[f"{TEACHER}@nyjc.edu.sg"] = [
+    {"id": "course-1", "name": "17S1-CSC"}]
 COURSES_BY_EMAIL[f"{OTHER}@nyjc.edu.sg"] = []
 COURSEWORK_BY_ID[("course-1", "cw-1")] = {
     "id": "cw-1", "title": "Algebra Worksheet", "state": "DRAFT"}
 COURSEWORK_BY_ID[("course-1", "cw-2")] = {
     "id": "cw-2", "title": "History Quiz", "state": "ASSIGNED"}
+
+# --- #105 mirror-flag fixtures (added post-#104) ------------------------------
+# Google-side studentSubmissions for the linked coursework, keyed like
+# the staff list-all reads them, plus the roster join (Google's
+# obfuscated userId -> school email). sub-1 (STUDENT) is TURNED_IN on
+# Google; sub-3 (uid-user-student3) is CREATED there -> its campus row
+# flags "not mirrored"; sub-2 (STUDENT2) is a draft -> never flagged.
+GC_ROWS_BY_KEY: dict[tuple[str, str], list[dict]] = {
+    ("course-1", "cw-1"): [
+        {"id": "gc-1", "userId": "gid-1", "state": "TURNED_IN"},
+        {"id": "gc-3", "userId": "gid-3", "state": "CREATED"},
+    ],
+}
+ROSTER_BY_COURSE: dict[str, list[dict]] = {
+    "course-1": [
+        {"profile": {"id": "gid-1", "emailAddress": f"{STUDENT}@nyjc.edu.sg"}},
+        {"profile": {"id": "gid-3",
+                     "emailAddress": "uid-user-student3@nyjc.edu.sg"}},
+    ],
+}
+# A reviewer whose bridge is unusable (never connected): the states
+# endpoint must degrade, not fail.
+NOT_CONNECTED_EMAILS = {"uid-user-teacher2@nyjc.edu.sg"}
 
 
 # --- app + login seam ---------------------------------------------------------
@@ -334,6 +394,9 @@ seed_user(student2_client, STUDENT2)
 
 other_client = app.test_client()
 seed_user(other_client, OTHER)
+
+teacher2_client = app.test_client()
+seed_user(teacher2_client, "uid-user-teacher2")
 
 anonymous_client = app.test_client()
 
@@ -524,6 +587,50 @@ check("the owning student's review view is unchanged (read-only)",
 r = teacher_client.get("/assignments")
 check("the assignments list page still renders",
       r.status_code == 200, f"status={r.status_code}")
+
+
+
+# --- 7. the #105 mirror flag: classroom-states endpoint + badge ---------------
+print("== #105 mirror flag ==")
+
+states_url = "/api/v1/assignments/a-linked/classroom-states"
+r = teacher_client.get(states_url)
+body = r.get_json()
+check("states endpoint 200 for the reviewer",
+      r.status_code == 200, f"status={r.status_code} body={body}")
+states = {s["email"]: s for s in body.get("states", [])}
+check("GC rows joined to school emails via the roster",
+      set(states) == {f"{STUDENT}@nyjc.edu.sg",
+                      "uid-user-student3@nyjc.edu.sg"},
+      f"emails={set(states)}")
+check("TURNED_IN row surfaced",
+      states.get(f"{STUDENT}@nyjc.edu.sg", {}).get("state") == "TURNED_IN")
+check("CREATED row surfaced (the flag's target)",
+      states.get("uid-user-student3@nyjc.edu.sg", {}).get("state") == "CREATED")
+
+r = student_client.get(states_url)
+check("student caller 404s (existence not revealed)",
+      r.status_code == 404, f"status={r.status_code}")
+
+r = teacher2_client.get("/api/v1/assignments/a-nc/classroom-states")
+body = r.get_json()
+check("unconnected reviewer degrades 200",
+      r.status_code == 200, f"status={r.status_code} body={body}")
+check("degraded marker names the bridge",
+      body.get("degraded") == "classroom_not_connected", f"body={body}")
+
+r = teacher_client.get("/api/v1/assignments/a-unlinked/classroom-states")
+body = r.get_json()
+check("not_linked assignment degrades",
+      r.status_code == 200 and body.get("degraded") == "not_linked",
+      f"body={body}")
+
+r = teacher_client.get("/assignments/a-linked/submissions")
+page = r.get_data(as_text=True)
+check("drill-down serves the classroom-states fetch",
+      "/classroom-states" in page)
+check("drill-down carries the not-mirrored badge",
+      "Not mirrored to Classroom" in page)
 
 print()
 if failures:

@@ -605,6 +605,63 @@ class ClassroomClient:
             params["pageToken"] = next_token
         return submissions
 
+    def student_submissions_list_all(
+            self, course_id: str, coursework_id: str,
+    ) -> list[dict]:
+        """List EVERY student's submission for one CourseWork (staff view).
+
+        Same endpoint as student_submissions_list but without the
+        userId filter: a caller holding
+        classroom.student-submissions.students.readonly (in
+        CLASSROOM_SCOPES_MVP, so the default connect grant suffices)
+        sees the whole course's rows. Runs on the VIEWING STAFF's
+        released credential. Follows nextPageToken, capped like
+        courses_list.
+        """
+        params: dict = {}
+        submissions: list[dict] = []
+        for _ in range(_COURSES_MAX_PAGES):
+            data = self.request(
+                "GET",
+                f"v1/courses/{course_id}/courseWork/{coursework_id}"
+                f"/studentSubmissions",
+                params=params,
+            )
+            submissions.extend(data.get("studentSubmissions", []))
+            next_token = data.get("nextPageToken")
+            if not next_token:
+                return submissions
+            params["pageToken"] = next_token
+        return submissions
+
+    def course_students_email_map(self, course_id: str) -> dict[str, str]:
+        """Google student id -> school email for one course's roster
+        (courses.students.list; classroom.rosters.readonly, in
+        CLASSROOM_SCOPES_MVP).
+
+        The join key between Classroom studentSubmissions (whose
+        `userId` is Google's obfuscated id) and Campus submissions
+        (keyed by the student's school email). Follows nextPageToken,
+        capped like courses_list.
+        """
+        params: dict = {}
+        mapping: dict[str, str] = {}
+        for _ in range(_COURSES_MAX_PAGES):
+            data = self.request(
+                "GET",
+                f"v1/courses/{course_id}/students",
+                params=params,
+            )
+            for student in data.get("students", []):
+                profile = student.get("profile") or {}
+                if profile.get("id") and profile.get("emailAddress"):
+                    mapping[profile["id"]] = profile["emailAddress"]
+            next_token = data.get("nextPageToken")
+            if not next_token:
+                return mapping
+            params["pageToken"] = next_token
+        return mapping
+
     def student_submission_modify_attachments(
             self, course_id: str, coursework_id: str, submission_id: str,
             add_attachments: list[dict],

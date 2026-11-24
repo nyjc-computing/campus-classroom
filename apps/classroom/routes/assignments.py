@@ -80,6 +80,78 @@ def register_routes(app: flask.Flask, login_manager):
 
         return flask.jsonify([a.to_resource() for a in visible])
 
+    @app.get("/api/v1/assignments/<assignment_id>/classroom-states")
+    @login_manager.login_required
+    def api_assignment_classroom_states(assignment_id: str, **_):
+        """Per-student Classroom submission states for the drill-down (#105).
+
+        Reviewers only (creator or co-tutor, #130) — the same gate as
+        the submissions drill-down this enriches; anyone else 404s
+        without revealing the assignment. For each Classroom course the
+        assignment links to, one studentSubmissions.list (all students,
+        on the VIEWER's own MVP credential — students.readonly +
+        rosters.readonly, no incremental consent) plus a roster map
+        joins Google's obfuscated userId to the school email the campus
+        rows use:
+
+            {"states": [{email, course_id, coursework_id,
+                         submission_id, state}]}
+
+        Degrades explicitly ("states": [] + "degraded": <code>) when the
+        auth bridge is unusable (not connected / missing scope /
+        Classroom down) — the drill-down must keep rendering its campus
+        rows; only the #104 mirror flag goes away.
+        CampusSessionExpired still propagates (#98 re-auth contract).
+        """
+        user_id = flask.g.user.id
+        with campus_session.user_session() as client:
+            try:
+                assignment = client.api.assignments[assignment_id].get()
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    return flask.jsonify({"error": "Assignment not found"}), 404
+                raise
+            if not enrollment.can_review(assignment, user_id):
+                return flask.jsonify({"error": "Assignment not found"}), 404
+            links = [
+                (link.course_id, link.coursework_id)
+                for link in (assignment.classroom_links or [])
+                if getattr(link, "course_id", None)
+                and getattr(link, "coursework_id", None)
+            ]
+        if not links:
+            return flask.jsonify({"states": [], "degraded": "not_linked"})
+
+        try:
+            with cauth.with_classroom_session() as classroom:
+                states = []
+                for course_id, coursework_id in links:
+                    roster = classroom.course_students_email_map(course_id)
+                    for gc in classroom.student_submissions_list_all(
+                            course_id, coursework_id):
+                        email = roster.get(gc.get("userId") or "")
+                        if email:
+                            states.append({
+                                "email": email,
+                                "course_id": course_id,
+                                "coursework_id": coursework_id,
+                                "submission_id": gc.get("id"),
+                                "state": gc.get("state"),
+                            })
+        except cauth.CampusSessionExpiredError:
+            raise
+        except cauth.ClassroomAuthError as err:
+            # Read-only enrichment: degrade explicitly instead of
+            # failing the page's data load (same pattern as the
+            # rule-4 listing's bridge degradation).
+            flask.current_app.logger.warning(
+                "Classroom states degraded for assignment %s: %s (%s)",
+                assignment_id, err.code, err.message,
+            )
+            return flask.jsonify({"states": [], "degraded": err.code})
+
+        return flask.jsonify({"states": states})
+
     @app.post("/api/v1/assignments")
     @login_manager.login_required
     def api_create_assignment(**_):
