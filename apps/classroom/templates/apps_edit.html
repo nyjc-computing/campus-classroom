@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block title %}Edit app{% endblock %}
+
+{% block content %}
+<div class="container-md mt-4 mt-md-5">
+    <a class="small text-decoration-none" href="{{ url_for('apps_myapps') }}">
+        <i class="bi bi-arrow-left me-1"></i>My apps
+    </a>
+    <h2 class="mt-2 mb-1">
+        <i class="bi bi-pencil-square me-2"></i>Edit app
+        <code class="fs-5 ms-1">{{ app_record.slug }}</code>
+    </h2>
+    <p class="text-muted">
+        {{ size_kb }} KB · updated {{ app_record.updated_at | timestamp }}.
+        Changes go live immediately: assignments referencing this app serve
+        the new version (or the new address, if you move it).
+    </p>
+
+    <div id="edit-status" class="mb-3"></div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="app-name" class="form-label">App name</label>
+                <input type="text" class="form-control" id="app-name"
+                       value="{{ app_record.name or '' }}"
+                       data-original="{{ app_record.name or '' }}"
+                       placeholder="Defaults to the current name">
+                <div class="form-text">Display name for the assignment
+                    builder (emptying it keeps the stored name).</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="app-slug" class="form-label">Slug</label>
+                <input type="text" class="form-control" id="app-slug"
+                       value="{{ app_record.slug }}"
+                       data-original="{{ app_record.slug }}"
+                       oninput="onSlugInput()">
+                <div class="form-text">The app's address:
+                    <code><span id="slug-preview">{{ app_record.slug }}</span></code>.
+                    Slugs are referenced by published assignments — only
+                    move one if you mean to.</div>
+                <div id="move-warning" class="alert alert-warning mt-2 mb-0 d-none">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    Moving re-publishes the app at the new address.
+                    Assignments that reference
+                    <code>{{ app_record.slug }}</code> keep pointing at the
+                    old slug and will stop rendering — they need re-sending
+                    (or re-embedding) against the new address.
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox"
+                               id="remove-old-slug">
+                        <label class="form-check-label" for="remove-old-slug">
+                            Remove the old <code>{{ app_record.slug }}</code>
+                            after the move (leave it to keep both copies)
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label" for="app-file">Replacement HTML file</label>
+                <div id="app-drop" class="app-dropzone" tabindex="0" role="button"
+                     aria-label="Choose or drop a replacement HTML file">
+                    <i class="bi bi-cloud-arrow-up fs-3 text-primary d-block mb-1"></i>
+                    <div class="fw-semibold">Drag &amp; drop a replacement HTML file here</div>
+                    <div class="text-muted small">
+                        or <span class="text-primary">browse files</span> —
+                        optional; leave empty to keep the current content
+                    </div>
+                </div>
+                <input type="file" class="d-none" id="app-file"
+                       accept=".html,.htm,text/html" tabindex="-1">
+                <div class="form-text" id="app-file-status">
+                    Keeping the current content ({{ size_kb }} KB).</div>
+                <button type="button" id="app-file-clear"
+                        class="btn btn-link btn-sm p-0 mt-1 d-none">Keep the current file instead</button>
+            </div>
+
+            <button type="button" id="save-btn" class="btn btn-primary"
+                    onclick="saveChanges()">
+                <i class="bi bi-check-lg me-1"></i>Save changes
+            </button>
+        </div>
+    </div>
+
+    <p class="text-muted small">
+        A name or content change updates the app in place. A slug move
+        re-publishes under the new address — the registry treats slugs as
+        permanent addresses, so a move is a re-publish (and, if you choose,
+        a removal of the old copy), not a rename.
+    </p>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app-upload.js') }}"></script>
+<script>
+const ORIGINAL_SLUG = {{ app_record.slug | tojson }};
+const MAX_APP_BYTES = 2000000;
+let newHtml = null;
+
+const slugInput = document.getElementById('app-slug');
+const moveWarning = document.getElementById('move-warning');
+const removeOldCheck = document.getElementById('remove-old-slug');
+
+function slugCleanup(raw) {
+    return raw.trim().toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function onSlugInput() {
+    const cleaned = slugCleanup(slugInput.value);
+    document.getElementById('slug-preview').textContent = cleaned || '<slug>';
+    moveWarning.classList.toggle('d-none', cleaned === ORIGINAL_SLUG);
+}
+
+const upload = initAppFileUpload({
+    zone: '#app-drop',
+    input: '#app-file',
+    status: '#app-file-status',
+    maxBytes: MAX_APP_BYTES,
+    emptyText: 'Keeping the current content ({{ size_kb }} KB).',
+    onFile: (name, html) => {
+        newHtml = html;
+        document.getElementById('app-file-clear').classList.remove('d-none');
+    },
+});
+
+document.getElementById('app-file-clear').addEventListener('click', () => {
+    newHtml = null;
+    upload.clear();
+    document.getElementById('app-file-clear').classList.add('d-none');
+});
+
+async function saveChanges() {
+    const box = document.getElementById('edit-status');
+    box.innerHTML = '';
+
+    const newSlug = slugCleanup(slugInput.value);
+    const moving = newSlug !== ORIGINAL_SLUG;
+    if (moving && !newSlug) {
+        box.innerHTML = '<div class="alert alert-warning mb-0">The slug cannot be empty.</div>';
+        return;
+    }
+
+    if (moving && removeOldCheck.checked) {
+        const ok = confirm(
+            `Move the app to ${newSlug} and remove ${ORIGINAL_SLUG}? ` +
+            `Assignments referencing ${ORIGINAL_SLUG} will stop rendering.`);
+        if (!ok) return;
+    }
+
+    // A minimal PATCH: only the fields that actually changed — an
+    // unchanged Save (nothing touched) warns client-side instead of
+    // round-tripping a no-op the API answers 400.
+    const body = {};
+    const name = document.getElementById('app-name').value.trim();
+    const originalName = document.getElementById('app-name').dataset.original;
+    if (name && name !== originalName) body.name = name;
+    if (moving) {
+        body.slug = newSlug;
+        body.remove_old_slug = removeOldCheck.checked;
+    }
+    if (newHtml !== null) body.html = newHtml;
+    if (Object.keys(body).length === 0) {
+        box.innerHTML = '<div class="alert alert-warning mb-0">Nothing to change — edit the name, the slug, or pick a replacement file.</div>';
+        return;
+    }
+
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true;
+    try {
+        const response = await fetch('/api/v1/apps/' + encodeURIComponent(ORIGINAL_SLUG), {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            // A dead Campus grant (#98) answers 401 here: re-auth is the
+            // only remedy, so redirect before any generic error UI.
+            if (handleSessionExpiry(response, data)) return;
+            box.innerHTML = `<div class="alert alert-danger mb-0">${escapeText(data.error || 'Update failed.')}</div>`;
+            return;
+        }
+        if (data.warning) {
+            box.innerHTML = `<div class="alert alert-warning mb-0">${escapeText(data.warning)}</div>`;
+            return;
+        }
+        // Redirect-after-save: the reload renders the fresh My apps
+        // table plus the server-side success banner.
+        location.href = '{{ url_for("apps_myapps") }}?updated=' + encodeURIComponent(data.slug);
+    } catch (error) {
+        box.innerHTML = '<div class="alert alert-danger mb-0">Update failed. Please try again.</div>';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function escapeText(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

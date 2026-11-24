@@ -36,8 +36,17 @@
             </div>
             <div class="mb-3">
                 <label for="app-file" class="form-label">HTML file <span class="text-danger">*</span></label>
-                <input type="file" class="form-control" id="app-file"
-                       accept=".html,.htm,text/html" required>
+                <div id="app-drop" class="app-dropzone" tabindex="0" role="button"
+                     aria-label="Choose or drop an HTML file">
+                    <i class="bi bi-cloud-arrow-up fs-3 text-primary d-block mb-1"></i>
+                    <div class="fw-semibold">Drag &amp; drop your HTML file here</div>
+                    <div class="text-muted small">
+                        or <span class="text-primary">browse files</span> —
+                        single-file .html, &le; 2 MB
+                    </div>
+                </div>
+                <input type="file" class="d-none" id="app-file"
+                       accept=".html,.htm,text/html" tabindex="-1">
                 <div class="form-text" id="app-file-status">No file selected.</div>
             </div>
             <button type="button" id="publish-btn" class="btn btn-primary"
@@ -57,6 +66,7 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app-upload.js') }}"></script>
 <script>
 const MAX_APP_BYTES = 2000000;
 let appHtml = null;
@@ -67,25 +77,13 @@ function updateSlugPreview() {
     document.getElementById('slug-preview').textContent = cleaned || '<slug>';
 }
 
-document.getElementById('app-file').addEventListener('change', function () {
-    const file = this.files && this.files[0];
-    appHtml = null;
-    const status = document.getElementById('app-file-status');
-    if (!file) {
-        status.textContent = 'No file selected.';
-        return;
-    }
-    if (file.size > MAX_APP_BYTES) {
-        status.textContent = `"${file.name}" is ${Math.round(file.size / 1024)} KB — apps are limited to 2 MB.`;
-        this.value = '';
-        return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-        appHtml = String(reader.result || '');
-        status.textContent = `${file.name} · ${Math.max(1, Math.round(appHtml.length / 1024))} KB ready.`;
-    };
-    reader.readAsText(file);
+const upload = initAppFileUpload({
+    zone: '#app-drop',
+    input: '#app-file',
+    status: '#app-file-status',
+    maxBytes: MAX_APP_BYTES,
+    emptyText: 'No file selected.',
+    onFile: (name, html) => { appHtml = html; },
 });
 
 async function publishApp() {

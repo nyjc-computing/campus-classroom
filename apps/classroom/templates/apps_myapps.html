@@ -24,6 +24,13 @@
         assigned.
     </div>
     {% endif %}
+    {% if updated %}
+    <div class="alert alert-success mb-3">
+        <i class="bi bi-check-circle-fill me-1"></i>
+        Saved. <code>{{ updated }}</code> is up to date — assignments
+        referencing it serve the new version.
+    </div>
+    {% endif %}
 
     {% if apps %}
     <div class="table-responsive">
@@ -34,6 +41,7 @@
                 <th>Name</th>
                 <th>Size</th>
                 <th>Updated</th>
+                <th></th>
             </tr>
             </thead>
             <tbody>
@@ -44,6 +52,12 @@
                 <td>{{ app.name or app.slug }}</td>
                 <td>{{ size_kb }} KB</td>
                 <td>{{ app.updated_at | timestamp }}</td>
+                <td class="text-end">
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="{{ url_for('apps_edit', slug=app.slug) }}">
+                        <i class="bi bi-pencil me-1"></i>Edit
+                    </a>
+                </td>
             </tr>
             {% endfor %}
             </tbody>
