@@ -31,15 +31,51 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
 <script>
-// The page gate (apps/classroom __init__) already 404'd non-owners; this
-// fetch hits the same owner-only API, so the gate is enforced twice.
+// The page gate (apps/classroom __init__) already 404'd non-owners; these
+// fetches hit the same reviewer-only APIs, so the gate is enforced twice.
 const assignmentId = {{ assignment_id | tojson }};
+
+// #105: Google-side submission states for the assignment's linked
+// courses (email -> state), fetched from the reviewer-only
+// classroom-states endpoint. Empty on bridge degradation — the badge
+// degrades away with it, never the campus rows.
+let CLASSROOM_STATES = [];
+
+async function loadClassroomStates() {
+    try {
+        const response = await fetch(
+            `/api/v1/assignments/${encodeURIComponent(assignmentId)}/classroom-states`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.degraded) {
+            console.warn('Classroom states degraded:', data.degraded);
+            return;
+        }
+        CLASSROOM_STATES = data.states || [];
+    } catch (error) {
+        console.warn('Classroom states unavailable:', error);
+    }
+}
+
+function classroomStateFor(submission) {
+    // Match on the course the campus submission was opened from, then
+    // on email alone (a student in two linked courses gets one GC row
+    // per coursework).
+    return CLASSROOM_STATES.find(
+        (s) => s.email === submission.student_id
+            && (!submission.course_id || s.course_id === submission.course_id),
+    ) || CLASSROOM_STATES.find(
+        (s) => s.email === submission.student_id);
+}
 
 async function loadSubmissions() {
     const container = document.getElementById('submissions-container');
     try {
-        const response = await fetch(
-            `/api/v1/submissions/by-assignment/${encodeURIComponent(assignmentId)}`);
+        const [response] = await Promise.all([
+            fetch(
+                `/api/v1/submissions/by-assignment/${encodeURIComponent(assignmentId)}`),
+            loadClassroomStates(),
+        ]);
         if (!response.ok) {
             // A dead Campus grant (#98) answers 401 here: re-auth is the
             // only remedy, so redirect before any generic error UI.
@@ -90,18 +126,25 @@ async function loadSubmissions() {
 }
 
 function submissionRowHtml(submission) {
-    // #104's submit response carries an ephemeral "mirror" status, but
-    // nothing is persisted on the submission record yet — so no
-    // "not mirrored to Classroom" flag can render here (issue #105
-    // notes its future home in the PR).
+    // #105: a submitted row whose Google Classroom counterpart is not
+    // TURNED_IN means the submit-time mirror (#104) skipped — usually a
+    // credential minted before coursework.me was grantable (the /a/
+    // page prompts those students to reconnect; admins can heal the
+    // rest through campus.auth's integration action proxies).
+    const gc = classroomStateFor(submission);
+    const notMirrored = Boolean(submission.submitted_at)
+        && (!gc || gc.state !== 'TURNED_IN');
     const reviewUrl = `/submissions/${encodeURIComponent(submission.id)}`;
     const status = submission.submitted_at
         ? `Submitted at ${timestamp(submission.submitted_at)}`
         : 'Draft';
+    const mirrorBadge = notMirrored
+        ? ` <span class="badge text-bg-warning" title="Submitted on Campus but not turned in on Google Classroom">Not mirrored to Classroom</span>`
+        : '';
     return `
         <tr>
             <td class="text-break">${escapeHtml(submission.student_id)}</td>
-            <td class="text-nowrap">${escapeHtml(status)}</td>
+            <td class="text-nowrap">${escapeHtml(status)}${mirrorBadge}</td>
             <td>${submission.responses.length}</td>
             <td>${submission.feedback.length}</td>
             <td class="text-end">
