@@ -13,6 +13,11 @@ server, no network, no real Google account):
    materials) + add-on attachment each, view URIs point at the deployed
    origin, classroom_links stores course/coursework/attachment ids, and
    the assignment locks for editing (PATCH/DELETE -> 409).
+2b. Draft description flattens to plain text (markdown artifacts gone,
+    link destinations kept, 30k-char cap truncates instead of failing
+    the create) and the outcome deep link is the Classwork tab — the
+    per-post URLs (alternateLink included) render the near-empty
+    student details view while the post is a draft (live 2026-11-24).
 3. Ineligible teacher (capability says no, or the preview API errors):
    CourseWork carries a Link Material to /a/{assignment_id}; link stored
    without attachment_id.
@@ -32,6 +37,7 @@ server, no network, no real Google account):
 Usage: .venv/Scripts/python.exe scripts/verify_issue_10.py
 """
 
+import base64
 import json
 import os
 import re
@@ -55,8 +61,11 @@ from campus.model import Assignment, ClassroomLink  # noqa: E402
 from campus_python import errors as campus_errors  # noqa: E402
 from urllib3.util.retry import Retry  # noqa: E402
 
-from apps.classroom import classroom_auth as cauth  # noqa: E402
-from apps.classroom import create_app  # noqa: E402
+from apps.classroom import (
+    cauth,
+    create_app,  # noqa: E402
+    enrollment,  # noqa: E402
+)  # noqa: E402
 
 # One pooled, retrying session for every HTTP call the seam makes: fresh
 # loopback connections intermittently abort on this dev box (WinError
@@ -496,6 +505,77 @@ check("re-send reports already_linked for posted classes",
       str(statuses))
 check("re-send creates no new CourseWork",
       len(StubClassroom.coursework_creates) == 2)
+check("already-linked outcome links the Classwork tab too",
+      all(r["coursework_url"]
+          == "https://classroom.google.com/w/"
+          + base64.urlsafe_b64encode(cid.encode()).decode().rstrip("=")
+          + "/t/all"
+          for cid, r in zip(("course_111", "course_222"), results,
+                            strict=False)),
+      json.dumps([r["coursework_url"] for r in results]))
+
+# ---------------------------------------------------------------------------
+# 2b. Draft description (markdown -> plain text) + draft deep link
+# ---------------------------------------------------------------------------
+# Classroom instructions are plain text: staff markdown must arrive
+# flattened (no literal ** / ##, link destinations kept), truncated at
+# Classroom's 30,000-char description cap rather than failing the
+# create, and the outcome link must land the teacher on the Classwork
+# tab — the per-post URLs (alternateLink included) render the
+# near-empty student details view while the post is a draft (live
+# 2026-11-24, JC1 HBL draft).
+reset_stub()
+
+
+def base64url(s):
+    return base64.urlsafe_b64encode(s.encode()).decode().rstrip("=")
+
+
+STORE.new_assignment(
+    "a_md_desc", created_by=CAMPUS_EMAIL,
+    description=(
+        "## Heading\n\nSee [the guide](https://example.com/guide) "
+        "**today**\nnl2br keeps this line\n\n\n\nSecond paragraph"
+    ),
+)
+STORE.new_assignment(
+    "a_long_desc", created_by=CAMPUS_EMAIL,
+    description="Head marker " + "x" * 40_000 + "\n\nTail marker",
+)
+resp = client.post(
+    "/api/v1/assignments/a_md_desc/classroom/send",
+    json={"course_ids": ["course_111"]},
+)
+check("markdown-description send returns 200", resp.status_code == 200)
+create_body = StubClassroom.coursework_creates[0][1]
+desc = create_body.get("description", "")
+check("GC draft carries the description flattened to plain text",
+      "Heading" in desc
+      and "the guide (https://example.com/guide)" in desc
+      and "**" not in desc and "##" not in desc
+      and "nl2br keeps this line" in desc and "Second paragraph" in desc,
+      repr(desc))
+check("flattened description carries no HTML markup",
+      "<" not in desc and ">" not in desc, repr(desc))
+outcome = resp.get_json()["results"][0]
+check("post-send deep link is the course's Classwork tab",
+      outcome["coursework_url"]
+      == f"https://classroom.google.com/w/{base64url('course_111')}/t/all",
+      outcome["coursework_url"])
+
+resp = client.post(
+    "/api/v1/assignments/a_long_desc/classroom/send",
+    json={"course_ids": ["course_111"]},
+)
+check("oversize-description send still posts (truncated, not 400)",
+      resp.status_code == 200
+      and resp.get_json()["results"][0]["status"] == "attached",
+      resp.get_data(as_text=True)[:200])
+long_desc = StubClassroom.coursework_creates[-1][1].get("description", "")
+check("oversize description truncates inside the Classroom cap",
+      len(long_desc) <= 30_000 and long_desc.startswith("Head marker")
+      and long_desc.endswith("…") and "Tail marker" not in long_desc,
+      f"len={len(long_desc)} tail={long_desc[-40:]!r}")
 
 # ---------------------------------------------------------------------------
 # 3. Ineligible teacher -> Link Material fallback
@@ -679,6 +759,9 @@ check("signed-in visitor in a linked course renders the share page (v1.3)",
 # A signed-in visitor without a google.classroom connection gets the
 # connect prompt (deny + CTA), never content.
 revoke_credentials()
+# a6003d7's 60s course cache would answer this request from the
+# connected request above; clear it so the gate itself is exercised.
+enrollment._courses_cache.clear()
 resp = client_foreign.get("/a/a_eligible")
 check("signed-in visitor without a connection gets the connect prompt",
       resp.status_code == 403

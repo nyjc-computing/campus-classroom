@@ -15,6 +15,9 @@ still split paragraphs, and "- " lines form lists.
 """
 
 
+import re
+from html.parser import HTMLParser
+
 import markdown
 import nh3
 
@@ -34,4 +37,69 @@ def render_markdown(text: str | None) -> str:
     )
 
 
-__all__ = ["render_markdown"]
+class _PlainTextInput(HTMLParser):
+    """Text-node collector that keeps link destinations readable.
+
+    Plain text cannot carry <a href>, so a markdown link
+    [text](url) survives as ``text (url)`` — otherwise instructions
+    like "see the guide" would lose the destination entirely. Block
+    tags emit paragraph separators: python-markdown only separates
+    sibling blocks with a single newline, which would read as one wall
+    of text once the tags are stripped.
+    """
+
+    # Line break inside a soft structure (list items keep together);
+    # paragraph break around real blocks.
+    _BLOCK_SEPS = {
+        "p": "\n\n", "h1": "\n\n", "h2": "\n\n", "h3": "\n\n",
+        "h4": "\n\n", "h5": "\n\n", "h6": "\n\n", "blockquote": "\n\n",
+        "pre": "\n\n", "div": "\n\n", "tr": "\n\n", "li": "\n",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._open_hrefs: list[str | None] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._open_hrefs.append(dict(attrs).get("href"))
+            # Marker: link text accumulates into its own part.
+            self.parts.append("")
+        elif tag in self._BLOCK_SEPS:
+            self.parts.append(self._BLOCK_SEPS[tag])
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._open_hrefs:
+            href = self._open_hrefs.pop()
+            link_text = self.parts.pop()
+            if href and href != link_text:
+                link_text += f" ({href})"
+            self.parts.append(link_text)
+
+    def handle_data(self, data):
+        if self._open_hrefs:
+            self.parts[-1] += data
+        else:
+            self.parts.append(data)
+
+
+def markdown_to_plain(text: str | None) -> str:
+    """Staff-authored markdown as plain text.
+
+    For surfaces that cannot render markup (Google Classroom
+    instructions are plain text): the same parse used for display gets
+    flattened — tags stripped, entities decoded, link destinations kept
+    — then runs of blank lines collapse to one paragraph break.
+    """
+    if not text:
+        return ""
+    parser = _PlainTextInput()
+    parser.feed(render_markdown(text))
+    parser.close()
+    lines = [re.sub(r"[ \t]+", " ", line).strip()
+             for line in "".join(parser.parts).splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+__all__ = ["markdown_to_plain", "render_markdown"]
