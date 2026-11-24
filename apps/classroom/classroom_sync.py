@@ -33,11 +33,17 @@ import base64
 import campus.common.utils.url as campus_url
 
 from . import classroom_auth as cauth
+from . import text_render
 
 # userProfiles.checkUserCapability capability gating attachment creation
 # (PRD §6.7). Needs classroom.addons.teacher — already in the MVP connect
 # set — and the V1_20240930_PREVIEW preview version (classroom_auth).
 _CREATE_ADDON_CAPABILITY = "CREATE_ADD_ON_ATTACHMENT"
+
+# Classroom CourseWork.description accepts at most 30,000 characters
+# (courses.courseWork reference) — anything longer 400s the whole
+# create, so a long staff description must be truncated defensively.
+GC_DESCRIPTION_MAX = 30_000
 
 # Stable outcome status values for the picker UI.
 STATUS_ATTACHED = "attached"  # CourseWork + add-on attachment created
@@ -65,19 +71,33 @@ def _link_material(share_url: str, title: str) -> list[dict]:
     return [{"link": {"url": share_url, "title": title}}]
 
 
-def coursework_ui_link(course_id: str, coursework_id: str) -> str:
-    """Deep link to a coursework post in the Classroom web UI.
+def coursework_ui_link(course_id: str) -> str:
+    """Deep link to a course's Classwork tab in the Classroom web UI.
 
-    Classroom encodes its ids base64url in web-UI URLs (verified live
-    2026-11-16 against the CampusClass E2E draft: the /c/<course>/a/
-    <coursework> URL lands on the assignment's Instructions page). The
-    API's alternateLink is preferred when Google supplies one; this
-    constructs the same shape for when it does not.
+    Teacher-facing — send outcomes point the teacher at where the
+    (draft) post is actionable. Classroom encodes its ids base64url in
+    web-UI URLs. The per-post shapes are wrong for drafts, verified
+    live 2026-11-24 (JC1 HBL draft): Classroom's own alternateLink for
+    a draft (/c/<course>/a/<coursework>/details) and the constructed
+    /c/<course>/a/<coursework> both render the near-empty student
+    details view until the teacher clicks Assign — the edit UI lives
+    on the Classwork tab, where the draft is listed and clickable.
     """
-    def enc(value: str) -> str:
-        return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
+    enc = base64.urlsafe_b64encode(course_id.encode()).decode().rstrip("=")
+    return f"https://classroom.google.com/w/{enc}/t/all"
 
-    return f"https://classroom.google.com/c/{enc(course_id)}/a/{enc(coursework_id)}"
+
+def coursework_description(description) -> str:
+    """The Campus assignment description as a Classroom instruction.
+
+    Classroom instructions are plain text, so staff markdown renders
+    flattened (text_render.markdown_to_plain); overlong descriptions
+    truncate at Classroom's cap rather than failing the whole create.
+    """
+    plain = text_render.markdown_to_plain(str(description))
+    if len(plain) > GC_DESCRIPTION_MAX:
+        plain = plain[:GC_DESCRIPTION_MAX - 1].rstrip() + "…"
+    return plain
 
 
 def send_assignment_to_classroom(
@@ -100,10 +120,8 @@ def send_assignment_to_classroom(
     Returns:
         One outcome dict per requested course (deduplicated, order kept):
         {course_id, status, coursework_id, attachment_id, message,
-        coursework_url} — coursework_url deep-links the post in the
-        Classroom web UI whenever a coursework_id is known, so the
-        teacher can jump straight to the draft (still hidden from
-        students until they click Assign there).
+        coursework_url} — coursework_url lands the teacher on the
+        course's Classwork tab in the Classroom web UI
     """
     origin = campus_url.canonical_origin()
     links_by_course = {
@@ -122,10 +140,7 @@ def send_assignment_to_classroom(
                 "coursework_id": coursework_id,
                 "attachment_id": getattr(link, "attachment_id", None),
                 "message": "This class already has this assignment posted.",
-                "coursework_url": (
-                    coursework_ui_link(course_id, coursework_id)
-                    if coursework_id else None
-                ),
+                "coursework_url": coursework_ui_link(course_id),
             })
             continue
         # Per-course share URL: the pinned course tells the share page
@@ -155,7 +170,8 @@ def _send_to_course(
         "workType": "ASSIGNMENT",
     }
     if assignment.description:
-        coursework_body["description"] = assignment.description
+        coursework_body["description"] = coursework_description(
+            assignment.description)
     if not eligible:
         coursework_body["materials"] = _link_material(share_url, assignment.title)
 
@@ -171,12 +187,11 @@ def _send_to_course(
             "message": "Classroom did not return an assignment ID for the "
                        "created draft; nothing was linked.",
         }
-    # alternateLink (Classroom web UI) when Google provides it; the
-    # constructed deep link otherwise (same destination, verified live).
-    coursework_url = (
-        coursework.get("alternateLink")
-        or coursework_ui_link(course_id, coursework_id)
-    )
+    # The teacher lands on the Classwork tab, where the draft is
+    # listed and editable — alternateLink (and the constructed per-post
+    # URL) is the student details view, which renders near-empty while
+    # the post is still a draft (verified live 2026-11-24).
+    coursework_url = coursework_ui_link(course_id)
 
     attachment_id = None
     if eligible:
