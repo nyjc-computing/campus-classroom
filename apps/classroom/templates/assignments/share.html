@@ -434,11 +434,11 @@ async function loadSubmission() {
     try {
         const response = await fetch(
             `/api/v1/submissions/for-student?assignment_id=${encodeURIComponent(SHARE.assignmentId)}`);
-        if (response.status === 404) {
-            submission = null;
-        } else if (response.ok) {
+        if (response.ok) {
+            // null body = the normal pre-submission state (#1247); an
+            // older backend answered 404 for it — also treat as none.
             submission = await response.json();
-        } else {
+        } else if (response.status !== 404) {
             throw new Error(formatApiError(await response.json().catch(() => ({})),
                                           'Could not load your answers'));
         }

@@ -63,7 +63,24 @@
                     return;
                 }
 
+                // 200 with a null body = no submission yet (#1247) — same
+                // none-yet surface as the legacy 404 above.
                 const submission = await response.json();
+                if (!submission) {
+                    container.innerHTML = `
+                        <div class="p-3">
+                            <div class="alert alert-info">
+                                <strong>No assignment found.</strong>
+                                Please complete the setup in Google Classroom first.
+                            </div>
+                            <p class="text-muted small">
+                                <strong>Course ID:</strong> ${context.courseId}<br>
+                                <strong>Item ID:</strong> ${context.itemId}
+                            </p>
+                        </div>
+                    `;
+                    return;
+                }
 
                 // Load the assignment details
                 const assignmentResp = await fetch(`/api/v1/assignments/${submission.assignment_id}`);
