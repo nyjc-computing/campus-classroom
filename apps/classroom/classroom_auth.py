@@ -30,6 +30,7 @@ Architecture (docs/auth-bridge.md has the full rationale):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
@@ -401,6 +402,61 @@ def _broker_release(min_scopes: list[str]) -> dict:
     return data
 
 
+def _request_release_cache() -> list[dict]:
+    """Broker releases reused within one request, on flask.g.
+
+    A /a/{id} view runs two differently-scoped Classroom sessions (the
+    review gate's taught check, then the enrollment/mirror ask); without
+    this each asked the broker separately — ~0.3–0.7 s per round trip,
+    and double-broker views measured 2.5–3.6 s end-to-end (2026-11-24
+    journey investigation, classroom#148). A cached release satisfies a
+    later demand when its granted scopes cover the demand; nothing
+    survives the request.
+    """
+    cache = getattr(flask.g, "_classroom_broker_releases", None)
+    if cache is None:
+        cache = []
+        flask.g._classroom_broker_releases = cache
+    return cache
+
+
+def _cached_release(min_scopes: list[str]) -> dict | None:
+    """A live cached release whose granted scopes cover min_scopes.
+
+    None outside a request context (fixtures, scripts): nothing is
+    cached or served without a request to scope the cache to.
+    """
+    try:
+        cache = _request_release_cache()
+    except RuntimeError:
+        return None
+    demanded = set(min_scopes)
+    now = time.time()
+    for creds in cache:
+        if now >= float(creds["expires_at"]) - _EXPIRY_SKEW_SECONDS:
+            continue
+        if demanded <= set(creds["scopes"]):
+            return creds
+    return None
+
+
+def _remember_release(creds: dict) -> None:
+    """Cache a fresh release for sibling demands in the same request."""
+    with contextlib.suppress(RuntimeError):
+        _request_release_cache().append(creds)
+
+
+def drop_cached_releases() -> None:
+    """Forget this request's cached releases.
+
+    Called when Google rejects a cached token with a 401: every cached
+    release derives from the same grant, so all of them are suspect and
+    the next demand must ask the broker fresh.
+    """
+    with contextlib.suppress(RuntimeError):
+        _request_release_cache().clear()
+
+
 def fetch_broker_credential(min_scopes: list[str] | None = None) -> dict:
     """One broker release as a credential dict, for in-memory use only.
 
@@ -408,17 +464,30 @@ def fetch_broker_credential(min_scopes: list[str] | None = None) -> dict:
     gated campus-side) — what the /classroom status page shows. A list
     enforces the minimum on the broker. Never persisted: the caller holds
     the token until `expires_in` at most, then asks the broker again.
+
+    Releases are memoized per request (classroom#148): a later demand
+    whose min_scopes the cached release's granted scopes already cover is
+    served from flask.g instead of a second broker round trip. Only an
+    explicit scope demand serves from the cache — the `min_scopes=None`
+    grant view always asks, so the status page shows the real grant.
     """
-    data = _broker_release(min_scopes or [])
+    demanded = list(min_scopes or [])
+    if demanded:
+        cached = _cached_release(demanded)
+        if cached is not None:
+            return cached
+    data = _broker_release(demanded)
     access_token = data.get("access_token") if isinstance(data, dict) else None
     if not access_token:
         raise OAuthFlowError("Campus token broker returned a malformed response.")
-    return {
+    creds = {
         "access_token": str(access_token),
         "expires_at": time.time() + max(int(data.get("expires_in") or 0), 0),
         "scopes": sorted(str(data.get("scope") or "").split()),
         "email": str(data.get("user_id") or ""),
     }
+    _remember_release(creds)
+    return creds
 
 
 # --- Classroom API client ------------------------------------------------------
@@ -489,6 +558,9 @@ class ClassroomClient:
                 # Access token revoked/expired server-side ahead of
                 # schedule: release a fresh one from the broker, retry once.
                 self._creds = None
+                # A cached release served this token — drop the request's
+                # whole cache, or the retry would be served the same token.
+                drop_cached_releases()
                 continue
             break
         if not resp.ok:
