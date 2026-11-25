@@ -34,6 +34,7 @@ from campus_python.errors import (
     ServerError,
     UnavailableError,
 )
+from campus_python.errors import APIError as CampusAPIError
 
 from . import classroom_auth as cauth
 
