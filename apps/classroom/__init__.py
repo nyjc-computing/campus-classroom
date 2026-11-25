@@ -203,7 +203,33 @@ def create_app():
     @app.get("/assignments/new")
     @login_manager.login_required
     def assignment_new(**_):
-        """Create new assignment page."""
+        """Create new assignment page (teachers only — classroom#147).
+
+        The 2026-11-24 journey investigation saw six students receive
+        this page with HTTP 200. Gated on taught courses — the same
+        signal the staff surfaces use, cached 60s per user: no
+        Classroom connection or a pre-#1095-scope connection gets the
+        standard reconnect page, a connected non-teacher a plain 403.
+        """
+        try:
+            teaches = bool(enrollment.taught_courses())
+        except cauth.NotConnectedError:
+            return flask.render_template(
+                "assignments/share_connect.html",
+                profile_integrations_url=(
+                    f"{cauth.profile_integrations_url()}/profile/integrations"
+                ),
+            ), 403
+        except cauth.MissingClassroomScopesError:
+            return flask.render_template(
+                "assignments/share_connect.html",
+                profile_integrations_url=(
+                    f"{cauth.profile_integrations_url()}/profile/integrations"
+                ),
+                reconnect_reason="scope",
+            ), 403
+        if not teaches:
+            flask.abort(403)
         return flask.render_template(
             "assignments/new.html",
             # The apphost (embed) deployment hosts the upload flow and

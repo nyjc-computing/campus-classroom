@@ -155,7 +155,11 @@ def register_routes(app: flask.Flask, login_manager):
     @app.post("/api/v1/assignments")
     @login_manager.login_required
     def api_create_assignment(**_):
-        """Create a new assignment.
+        """Create a new assignment (teachers only — classroom#147).
+
+        The 2026-11-24 journey investigation saw six students receive
+        the creation page; gate the write too, so the page-level check
+        is never the only line of defense.
 
         Request body:
             - title: Assignment title (required)
@@ -164,12 +168,25 @@ def register_routes(app: flask.Flask, login_manager):
             - classroom_links: Array of ClassroomLink objects (optional)
 
         Returns:
-            Created assignment as JSON
+            Created assignment as JSON; 403 for a connected non-teacher,
+            502 envelope for auth-bridge failures (fail-closed — a
+            create must not proceed on an unknown role)
         """
         data = flask.request.get_json()
 
         if not data or "title" not in data:
             return flask.jsonify({"error": "title is required"}), 400
+
+        try:
+            teaches = bool(enrollment.taught_courses())
+        except cauth.ClassroomAuthError as e:
+            return flask.jsonify({
+                "error": {"code": e.code, "message": e.message}
+            }), 502
+        if not teaches:
+            return flask.jsonify(
+                {"error": "Only teachers can create assignments"}
+            ), 403
 
         with campus_session.user_session() as client:
             try:
