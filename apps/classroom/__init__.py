@@ -430,10 +430,9 @@ def create_app():
         if getattr(flask.g, "user", None) is None:
             return flask.redirect(flask.url_for("sign_in"))
 
-        campus = flask.current_app.campus
         assignment = None
         try:
-            with campus.with_app_session() as client:
+            with campus_session.app_session() as client:
                 assignment = client.api.assignments[assignment_id].get()
         except Exception as e:
             if "not found" in str(e).lower():

@@ -76,8 +76,32 @@ def _error_text(err: BaseException) -> str:
 
 
 @contextmanager
+def app_session() -> Iterator[campus_python.Campus]:
+    """Open the app-scoped Campus session, as `with_app_session()`.
+
+    Same contract as the SDK context manager, but the client-credentials
+    mint runs on a throwaway Campus — same structural reason as
+    `_broker_release` (classroom_auth.py): a session block on the shared
+    app-wide instance leaves that user's or the app's bearer on it for
+    the block's lifetime, and any interleaving request thread's
+    flask_campus resolution (`push_context`) then presents it. The auth
+    service denies user principals on session-flow routes (#854/#1055),
+    the push hook degrades that request to anonymous (#28), and the
+    browser loops into /login (classroom#153; prod gthread workers make
+    the interleaving routine). Keep every with_*_session off
+    `flask.current_app.campus` unless the SDK gains per-request
+    principal scoping (campus-api-python#189).
+    """
+    with campus_python.Campus(timeout=60).with_app_session() as client:
+        yield client
+
+
+@contextmanager
 def user_session() -> Iterator[campus_python.Campus]:
     """Open the signed-in user's Campus session, as `with_user_session()`.
+
+    Runs on a throwaway Campus, never `flask.current_app.campus` — same
+    structural reason as app_session() above (classroom#153).
 
     Raises the classroom_auth errors on top of the SDK's own: a
     re-authentication-required failure surfaces as
@@ -98,7 +122,7 @@ def user_session() -> Iterator[campus_python.Campus]:
     as CampusSessionExpiredError keeps the #98 contract instead (#139
     harness found this latent path).
     """
-    campus = flask.current_app.campus
+    campus = campus_python.Campus(timeout=60)
     body_entered = False
     try:
         with campus.with_user_session() as client:
