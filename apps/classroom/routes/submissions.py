@@ -261,7 +261,10 @@ def register_routes(app: flask.Flask, login_manager):
             - assignment_id: Assignment ID (required)
 
         Returns:
-            Submission as JSON, or 404 if not found
+            Submission as JSON, or null when the student has none yet —
+            the normal pre-submission state, not an error (#1247): this
+            probe fires on every fresh assignment view, and a 404 read
+            like an outage in trace reviews.
         """
         user_id = flask.g.user.id
         assignment_id = flask.request.args.get("assignment_id")
@@ -273,10 +276,10 @@ def register_routes(app: flask.Flask, login_manager):
                 assignment_id=assignment_id,
                 student_id=user_id,
             )
-            if not submissions:
-                return flask.jsonify({"error": "Submission not found"}), 404
 
-        return flask.jsonify(submissions[0].to_resource())
+        return flask.jsonify(
+            submissions[0].to_resource() if submissions else None
+        )
 
     @app.patch("/api/v1/submissions/<submission_id>")
     @login_manager.login_required
