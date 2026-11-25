@@ -153,6 +153,39 @@ Prerequisites and gotchas:
 
 ---
 
+## Campus Client Discipline (2026-11-25, classroom#153)
+
+The app builds ONE `campus_python.Campus` at factory time and gunicorn
+runs it under **gthread** (`--workers 2 --threads 8`). Session blocks
+therefore have two hard rules — both violated once, each causing a
+prod outage where students looped through `/login` with a "missing
+access grant" banner (campus.auth denies user principals on
+session-flow routes, #854/#1055; the degraded request resolves
+anonymous and the browser bounces):
+
+- **Never open `with_user_session()`/`with_app_session()` on
+  `flask.current_app.campus`** — use `campus_session.user_session()` /
+  `campus_session.app_session()` (throwaway instances, the same
+  pattern `_broker_release` documented first). The old way left the
+  block's bearer on the shared instance, where an interleaving
+  thread's flask_campus resolution presented it. Pre-#189 the SDK's
+  bearer state was instance-global; campus-api-python v0.11.1+
+  (context-local ContextVars) makes the SDK side safe, but the
+  throwaway discipline stays as belt-and-braces.
+- **flask_campus owns its own Campus** (flask-campus v0.2.5, #40):
+  the framework's ambient calls never ride the host's client. Don't
+  "simplify" the framework instance away — the inline comments in
+  flask_campus/login_manager.py explain the failure it prevents.
+
+Diagnosis recipe for a recurrence: classroom prod logs
+(`railway logs --service campus-classroom --environment production`)
+show sign-in page size 4034 = with error banner vs 4568 clean, and the
+auth service logs print user emails on `google.classroom credential`
+NotFound errors; `No access grant designates this user for
+'sessions:read' (#883)` during login = the credential race class
+(campus-api-python#189/flask-campus#40/#1096), NOT a missing grant —
+there is nothing for an admin to grant the user.
+
 ## User-Journey Labeling (dev intent, all campus consumers)
 
 Document user journeys — every distinct request trip a user can make
