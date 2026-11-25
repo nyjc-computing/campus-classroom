@@ -401,9 +401,8 @@ def register_routes(app: flask.Flask, login_manager):
         if not documents.verify_embed_token(token, assignment_id, question_id):
             flask.abort(403)
 
-        campus = flask.current_app.campus
         try:
-            with campus.with_app_session() as client:
+            with campus_session.app_session() as client:
                 assignment = client.api.assignments[assignment_id].get()
         except Exception as e:
             if "not found" in str(e).lower():
@@ -422,7 +421,7 @@ def register_routes(app: flask.Flask, login_manager):
         slug = documents.question_app_slug(question)
         if not html and slug:
             try:
-                with campus.with_app_session() as client:
+                with campus_session.app_session() as client:
                     html = client.api.hostedapps.get_content(slug).decode(
                         "utf-8", errors="replace"
                     )
