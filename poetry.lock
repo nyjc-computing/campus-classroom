@@ -91,23 +91,23 @@ files = [
 
 [[package]]
 name = "campus-api-python"
-version = "0.10.9"
+version = "0.11.1"
 description = "Campus API for Python projects"
 optional = false
 python-versions = ">=3.11,<3.15"
 groups = ["main"]
 files = [
-    {file = "campus_api_python-0.10.9-py3-none-any.whl", hash = "sha256:73e7d550cc8232fde9536db1469a6859654ea8204c08f5d4a311ea358099648d"},
+    {file = "campus_api_python-0.11.1-py3-none-any.whl", hash = "sha256:8aea2efd98f35aeb5f4b1b6566e98c6800e7719e67336d65f3c045b273d33e09"},
 ]
 
 [package.dependencies]
 campus_common = {url = "https://github.com/nyjc-computing/campus-common/releases/download/v0.5.1/campus_common-0.5.1-py3-none-any.whl"}
-campus_model = {url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.4/campus_model-0.2.4-py3-none-any.whl"}
+campus_model = {url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.6/campus_model-0.2.6-py3-none-any.whl"}
 requests = ">=2.32.4,<3.0.0"
 
 [package.source]
 type = "url"
-url = "https://github.com/nyjc-computing/campus-api-python/releases/download/v0.10.9/campus_api_python-0.10.9-py3-none-any.whl"
+url = "https://github.com/nyjc-computing/campus-api-python/releases/download/v0.11.1/campus_api_python-0.11.1-py3-none-any.whl"
 
 [[package]]
 name = "campus-common"
@@ -129,13 +129,13 @@ url = "https://github.com/nyjc-computing/campus-common/releases/download/v0.5.1/
 
 [[package]]
 name = "campus-model"
-version = "0.2.4"
+version = "0.2.6"
 description = "Campus domain models: dataclass entities under campus/model - PEP 420 namespace portion"
 optional = false
 python-versions = ">=3.11.0,<3.15"
 groups = ["main"]
 files = [
-    {file = "campus_model-0.2.4-py3-none-any.whl", hash = "sha256:d71dbdd64e5defe707cce60eba79a2feba8d58b6ef7eacfc2718ab3ec4e4b661"},
+    {file = "campus_model-0.2.6-py3-none-any.whl", hash = "sha256:550b732e637bc977eb36f7410c92338fd216b889fddc7384461465d7eca8d569"},
 ]
 
 [package.dependencies]
@@ -143,7 +143,7 @@ campus_common = {url = "https://github.com/nyjc-computing/campus-common/releases
 
 [package.source]
 type = "url"
-url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.4/campus_model-0.2.4-py3-none-any.whl"
+url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.6/campus_model-0.2.6-py3-none-any.whl"
 
 [[package]]
 name = "certifi"
@@ -377,26 +377,26 @@ dotenv = ["python-dotenv"]
 
 [[package]]
 name = "flask-campus"
-version = "0.2.0"
+version = "0.2.5"
 description = "Flask consumer layer for Campus apps: flask_campus glue + audit middleware - PEP 420 namespace portion under campus/flask_campus (the audit client ships with campus-api-python)"
 optional = false
 python-versions = ">=3.11.0,<3.15"
 groups = ["main"]
 files = [
-    {file = "flask_campus-0.2.0-py3-none-any.whl", hash = "sha256:13144c6ade262488030b38947ea69c8c2f5b2f0b60c96256b8e0d25bfb051283"},
+    {file = "flask_campus-0.2.5-py3-none-any.whl", hash = "sha256:6fa5bb80c4d6a9076190204e200997c32a79cfb57053f8d59ec56ea9ba58feda"},
 ]
 
 [package.dependencies]
-campus_api_python = {url = "https://github.com/nyjc-computing/campus-api-python/releases/download/v0.10.9/campus_api_python-0.10.9-py3-none-any.whl"}
+campus_api_python = {url = "https://github.com/nyjc-computing/campus-api-python/releases/download/v0.11.1/campus_api_python-0.11.1-py3-none-any.whl"}
 campus_common = {url = "https://github.com/nyjc-computing/campus-common/releases/download/v0.5.1/campus_common-0.5.1-py3-none-any.whl"}
-campus_model = {url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.4/campus_model-0.2.4-py3-none-any.whl"}
+campus_model = {url = "https://github.com/nyjc-computing/campus-model/releases/download/v0.2.6/campus_model-0.2.6-py3-none-any.whl"}
 flask = ">=3.0.0,<4.0.0"
 requests = ">=2.32.4,<3.0.0"
 werkzeug = ">=3.0.0,<4.0.0"
 
 [package.source]
 type = "url"
-url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.2.0/flask_campus-0.2.0-py3-none-any.whl"
+url = "https://github.com/nyjc-computing/flask-campus/releases/download/v0.2.5/flask_campus-0.2.5-py3-none-any.whl"
 
 [[package]]
 name = "gunicorn"
@@ -752,4 +752,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "629835fca2e5440b0578caca5dd3e6c55dc4fa40234a52d1e968986a61f84d40"
+content-hash = "9d20a953ac7d695b702081f4201f7ddf18a061d4214196a2d96aee6db686b2cd"
