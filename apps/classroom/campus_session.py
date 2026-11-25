@@ -30,6 +30,7 @@ import campus_python
 import flask
 from campus.flask_campus import is_reauth_required
 from campus_python.errors import (
+    AccessDeniedError,
     RateLimitExceededError,
     ServerError,
     UnavailableError,
@@ -47,6 +48,15 @@ logger = logging.getLogger(__name__)
 # (#1096, campus-classroom's #98 implementation promoted). Keep it
 # imported, never re-inlined — a host-specific variant would drift from
 # the contract the audit-service hosts share.
+
+
+def _error_text(err: BaseException) -> str:
+    """Message text that survives the SDK's arg conventions.
+
+    str(err) is empty when the message was passed into a non-standard
+    constructor slot; the traceback-visible args always carry it.
+    """
+    return str(err) or " ".join(str(a) for a in err.args)
 
 
 @contextmanager
