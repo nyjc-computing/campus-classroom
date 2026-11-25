@@ -527,6 +527,7 @@ async function submitAssignment() {
         }
         submission = await response.json();
         render();
+        showMirrorNotice(submission && submission.mirror);
         flashSaved('Submitted — nice work');
     } catch (error) {
         showActionError(error);
@@ -612,6 +613,24 @@ function clearError() {
 function showActionError(error) {
     showError(error.message || 'Something went wrong. Please try again.',
               error.connectUrl);
+}
+
+function showMirrorNotice(mirror) {
+    // The submit route reports the Classroom mirror's outcome in the
+    // "mirror" key (classroom#148). The answers are saved either way —
+    // surface the sync outcome so a silent GC failure doesn't hide
+    // until a teacher asks where the submission chip is.
+    if (mirror === 'failed_relink') {
+        showError('Submitted, but the Google Classroom sync needs you to '
+                  + 'sign in again. Reconnect Google Classroom, then '
+                  + 'unsubmit and submit again to retry the sync.',
+                  SHARE.profileIntegrationsUrl);
+    } else if (mirror === 'failed' || mirror === 'skipped_missing_scope') {
+        showError('Submitted, but the Google Classroom sync did not run. '
+                  + 'If this keeps happening, reconnect Google Classroom '
+                  + 'from your campus profile.',
+                  SHARE.profileIntegrationsUrl);
+    }
 }
 
 function setBusy(busy) {

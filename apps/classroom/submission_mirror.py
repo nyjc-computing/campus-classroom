@@ -58,6 +58,10 @@ logger = logging.getLogger(__name__)
 STATUS_MIRRORED = "mirrored"
 STATUS_SKIPPED_MISSING_SCOPE = "skipped_missing_scope"
 STATUS_FAILED = "failed"
+# The broker release needs a fresh Campus sign-in / Google re-consent —
+# the one failure class the student can act on, so it gets its own value
+# and the share page shows the reconnect CTA (classroom#148).
+STATUS_FAILED_RELINK = "failed_relink"
 
 # The Classroom submission state that makes turnIn a no-op.
 _STATE_TURNED_IN = "TURNED_IN"
@@ -75,8 +79,8 @@ def mirror_submit(assignment, submission) -> str:
     """Best-effort mirror of a committed campus submit: attach the
     review link and turn in (unless Classroom is already TURNED_IN).
 
-    Returns STATUS_MIRRORED, STATUS_SKIPPED_MISSING_SCOPE or
-    STATUS_FAILED; never raises.
+    Returns STATUS_MIRRORED, STATUS_SKIPPED_MISSING_SCOPE,
+    STATUS_FAILED_RELINK or STATUS_FAILED; never raises.
     """
     return _best_effort(_submit_steps, assignment, submission)
 
@@ -85,8 +89,8 @@ def mirror_unsubmit(assignment, submission) -> str:
     """Best-effort mirror of a committed campus unsubmit: reclaim the
     Classroom submission (already-reclaimed precondition -> success).
 
-    Returns STATUS_MIRRORED, STATUS_SKIPPED_MISSING_SCOPE or
-    STATUS_FAILED; never raises.
+    Returns STATUS_MIRRORED, STATUS_SKIPPED_MISSING_SCOPE,
+    STATUS_FAILED_RELINK or STATUS_FAILED; never raises.
     """
     return _best_effort(_unsubmit_steps, assignment, submission)
 
@@ -104,6 +108,18 @@ def _best_effort(steps, assignment, submission) -> str:
             submission.id, ", ".join(err.missing),
         )
         return STATUS_SKIPPED_MISSING_SCOPE
+    except cauth.CampusSessionExpiredError as err:
+        # The broker release needs a fresh Campus sign-in or a Google
+        # re-consent (revoked/expired stored grant) — the one failure
+        # class the student can act on, so it gets its own status and
+        # the share page shows the reconnect CTA instead of staying
+        # silent (classroom#148; the live case behind enoch's post-
+        # submit broker 400 in the 2026-11-24 journey investigation).
+        logger.warning(
+            "submission %s: Classroom mirror needs re-auth (%s: %s)",
+            submission.id, err.code, err.message,
+        )
+        return STATUS_FAILED_RELINK
     except cauth.BrokerConfigError as err:
         # The broker refused the ask itself: until campus#1095 widens
         # the vault cap, coursework.me is not grantable yet. Same

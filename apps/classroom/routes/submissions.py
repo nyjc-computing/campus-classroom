@@ -487,7 +487,9 @@ def register_routes(app: flask.Flask, login_manager):
         Google Classroom (#104: attach the per-submission review link
         chip and turn in) — best-effort, never affecting this route's
         own success/failure; the response carries a "mirror" status key
-        (mirrored / skipped_missing_scope / failed).
+        (mirrored / skipped_missing_scope / failed_relink / failed;
+        failed_relink = the student must sign in / reconnect Google
+        Classroom, and the share page shows the reconnect CTA).
 
         Returns:
             Updated submission as JSON
