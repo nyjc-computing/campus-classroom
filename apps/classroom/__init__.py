@@ -20,10 +20,15 @@ load_dotenv()
 
 def create_app():
     """Application factory for Campus Classroom."""
+    # Static assets mount under the deployment's namespace (#156 gateway
+    # cutover): url_for('static') then emits /classroom/static/... or
+    # /apps/static/..., which campus-gateway routes (the host-root
+    # /static it would otherwise emit is unrouted behind the gateway).
+    static_url_path = "/apps/static" if documents.embed_mode() else "/classroom/static"
     app = flask.Flask(
         __name__,
         static_folder="static",
-        static_url_path="/static"
+        static_url_path=static_url_path
     )
 
     # Trace producer (campus#816 item 2, issue #37): record classroom
