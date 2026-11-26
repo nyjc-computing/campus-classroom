@@ -58,6 +58,15 @@ def create_app():
     if not app.config["SECRET_KEY"]:
         raise ValueError("SECRET_KEY environment variable is required")
 
+    # Fleet session cookie scheme (campus docs "Session Cookie Naming"):
+    # distinct name per deployment so the two apps this repo builds
+    # don't clobber each other's — or the other campus apps' — sessions
+    # on the shared gateway hostname (#156).
+    if documents.embed_mode():
+        app.config["SESSION_COOKIE_NAME"] = "campus_apphost_session"
+    else:
+        app.config["SESSION_COOKIE_NAME"] = "campus_classroom_session"
+
     # In-iframe session policy (issue #12): Classroom embeds /addon/* as
     # third-party iframes, where SameSite=Lax cookies are never sent —
     # every /addon/* route and its same-origin /api/v1/* fetch would be
@@ -129,10 +138,15 @@ def create_app():
         lambda: {"embed_mode": documents.embed_mode()}
     )
 
-    # Setup OAuth login manager
+    # Setup OAuth login manager. login_prefix mounts the auth blueprint
+    # under the deployment's namespace (flask-campus#47): /classroom/login
+    # vs /apps/login are dispatchable behind campus-gateway, where the
+    # root-level /login is shared by four consumer apps and unroutable
+    # (gateway umbrella campus#1295; opt-in tracked as classroom#156).
     login_manager = flask_campus.OAuthLoginManager(
         campus_client=campus,
-        default_endpoint="index"
+        default_endpoint="index",
+        login_prefix="/apps" if documents.embed_mode() else "/classroom",
     )
     login_manager.init_app(app)
 
@@ -174,7 +188,7 @@ def create_app():
             return flask.redirect(flask.url_for("apps_landing"))
         allowed = (
             path.startswith(("/apps/", "/api/v1/apps", "/static/"))
-            or path in {"/login", "/finalize_login", "/logout"}
+            or path in {"/apps/login", "/apps/finalize_login", "/apps/logout"}
         )
         if not allowed:
             flask.abort(404)
