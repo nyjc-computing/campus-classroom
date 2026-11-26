@@ -66,12 +66,12 @@
                             <li><a class="dropdown-item" href="/dashboard">Dashboard</a></li>
                             <li><hr class="dropdown-divider"></li>
                             {% endif %}
-                            <li><a class="dropdown-item" href="/logout">Log Out</a></li>
+                            <li><a class="dropdown-item" href="{% if embed_mode %}/apps/logout{% else %}/classroom/logout{% endif %}">Log Out</a></li>
                         </ul>
                     </div>
                 </div>
                 {% else %}
-                <a class="btn btn-sm btn-outline-primary" href="{% if embed_mode %}/login?next=%2Fapps%2Fpublish{% else %}/sign-in{% endif %}">Sign In</a>
+                <a class="btn btn-sm btn-outline-primary" href="{% if embed_mode %}/apps/login?next=%2Fapps%2Fpublish{% else %}/sign-in{% endif %}">Sign In</a>
                 {% endif %}
             </div>
         </nav>
