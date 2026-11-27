@@ -222,11 +222,23 @@ r = via_gateway(client, "/classroom/dashboard", "/classroom",
 check("flag on: gateway-hosted requests keep the #173 forward",
       location(r), f"{GATEWAY}/dashboard")
 
+r = client.get("/health", headers={"Host": "origin.example"})
+check("flag on: origin /health answers, never redirects",
+      (r.status_code, r.data), (200, b"ok"))
+r = via_gateway(client, "/classroom/health", "/classroom",
+                host="origin.example")
+check("flag on: gateway-emulated /health answers",
+      (r.status_code, r.data), (200, b"ok"))
+
 os.environ["EMBED_MODE"] = "1"
 client = create_app().test_client()
 r = client.get("/apps/add", headers={"Host": "origin.example"})
 check("flag on: apphost origin hit adds the namespace once",
       location(r), f"{GATEWAY}/apps/apps/add")
+
+r = client.get("/health", headers={"Host": "origin.example"})
+check("flag on: apphost origin /health answers, never redirects",
+      (r.status_code, r.data), (200, b"ok"))
 
 # --- result -----------------------------------------------------------------
 
