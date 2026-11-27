@@ -194,7 +194,9 @@ FORBIDDEN_ATTRS = [
 ]
 
 ROUTE_PAGES = [
-    ("/", "index", True),
+    # "/" is not here: the index view redirects signed-in visitors to the
+    # dashboard (portal entry), so it is swept as a direct template render
+    # in DIRECT_PAGES instead of through the seeded route.
     ("/sign-in", "sign_in", True),
     ("/dashboard", "dashboard", True),
     ("/assignments", "assignments/list", True),
@@ -226,6 +228,7 @@ ADDON_CONTEXT = {
 }
 
 DIRECT_PAGES = [
+    ("index.html", "index", True, {}),
     ("addon/teacher.html", "addon/teacher", True,
      {"context": ADDON_CONTEXT, "user_id": USER}),
     ("addon/student.html", "addon/student", True,
