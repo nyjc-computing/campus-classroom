@@ -11,7 +11,10 @@ their live Classroom courses via the auth bridge). Reads keep the
 ownership rules from the #29 slice; teacher review and feedback are
 per §6.11 (any teacher of the course) — enforced since #130 via
 enrollment.can_review (assignment creator OR co-tutor), mirroring
-Classroom's own submission contract.
+Classroom's own submission contract. Feedback authorship follows the
+same split (#63): students write responses and drive submit/unsubmit,
+reviewers write feedback — only through the reviewer-gated
+POST .../feedback endpoint, never through the student's PATCH.
 """
 
 import flask
@@ -286,7 +289,15 @@ def register_routes(app: flask.Flask, login_manager):
     def api_update_submission(submission_id: str, **_):
         """Update a submission.
 
-        Request body: Fields to update (responses, feedback, etc.)
+        Request body: Fields to update (responses, submitted_at).
+
+        Feedback is NOT settable here (#63): the route's only legitimate
+        caller is the submission's student (the ownership check below
+        403s everyone else), and feedback is reviewer-authored — a
+        `feedback` key is rejected with 403 rather than silently
+        dropped, so the whole request fails instead of half-applying.
+        Reviewers write feedback through POST .../feedback (can_review,
+        #130).
 
         Returns:
             Updated submission as JSON, or 404 if not found
@@ -317,6 +328,22 @@ def register_routes(app: flask.Flask, login_manager):
             if not enrollment.is_enrolled(assignment):
                 return _enrollment_denied()
 
+            # Feedback is reviewer-authored only (#63): this route's only
+            # legitimate caller is the submission's student, and the
+            # student must not write feedback — not even on their own
+            # submission (the pre-#63 code applied the key verbatim,
+            # letting a student fabricate or overwrite teacher feedback).
+            # Reject the whole request so a mixed payload (responses +
+            # feedback) cannot half-apply; reviewers use POST .../feedback.
+            if "feedback" in data:
+                return flask.jsonify({
+                    "error": "Feedback is written by the assignment's "
+                             "reviewers via POST "
+                             "/api/v1/submissions/<id>/feedback; it "
+                             "cannot be set through this route.",
+                    "code": "feedback_forbidden",
+                }), 403
+
             # Build update payload. An explicit submitted_at null is an
             # unsubmit: update() cannot express null (None means "omit"
             # there), so it goes through the library's unsubmit(),
@@ -332,8 +359,6 @@ def register_routes(app: flask.Flask, login_manager):
                 except documents.DocumentResponseError as e:
                     return _snapshot_denied(e)
                 updates["responses"] = data["responses"]
-            if "feedback" in data:
-                updates["feedback"] = data["feedback"]
 
             if "submitted_at" in data:
                 if data["submitted_at"] is None:
