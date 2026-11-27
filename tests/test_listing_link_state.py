@@ -90,6 +90,28 @@ check("old gateway double shape resolves bounded", r.status_code, 302)
 check("… to the namespaced canonical path",
       r.headers.get("Location", ""), lambda loc: "/classroom/connect" in loc)
 
+# --- C. the portal entry (#180 follow-up, user directive 2026-11-28) --------
+
+# campus.nyjc.app/classroom must land a signed-in visitor on their work
+# (the dashboard shows assignments, or the connect panel), and keep the
+# marketing page for anonymous visitors.
+from types import SimpleNamespace  # noqa: E402
+
+import flask  # noqa: E402
+
+app = create_app()
+with app.test_request_context("/", base_url="https://gateway.example"):
+    flask.g.user = SimpleNamespace(id="u1", email="u1@nyjc.edu.sg")
+    resp = app.view_functions["index"]()
+    check("signed-in portal entry redirects to the assignments list",
+          (resp.status_code,
+           resp.headers.get("Location", "")),
+          lambda got: got[0] == 302 and got[1].endswith("/assignments"))
+with app.test_request_context("/", base_url="https://gateway.example"):
+    rendered = app.view_functions["index"]()
+    check("anonymous portal entry keeps the marketing page",
+          isinstance(rendered, str) and "Sign In" in rendered, True)
+
 # --- result -----------------------------------------------------------------
 
 failed = [name for name, ok in checks if not ok]

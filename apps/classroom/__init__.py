@@ -304,6 +304,13 @@ def create_app():
     # Register UI routes
     @app.get("/")
     def index():
+        # The portal entry (campus.nyjc.app/classroom) lands a signed-in
+        # visitor on their assignments list, not the marketing page
+        # (user directive 2026-11-28): /assignments shows their
+        # assignments — or the #180 connect panel when their Classroom
+        # link is down. Anonymous visitors keep the landing.
+        if getattr(flask.g, "user", None) is not None:
+            return flask.redirect(flask.url_for("assignments_list"))
         return flask.render_template("index.html")
 
     # Liveness probe (issue #157): a plain 200 the cutover's health
