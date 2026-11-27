@@ -37,7 +37,7 @@ const MY_ID = {{ g.user.id | tojson }};
 async function loadAssignments() {
     try {
         // Rule 4 (#14): the API computes own + assigned-to-my-courses.
-        const response = await fetch('/api/v1/assignments');
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments`);
         if (!response.ok) {
             // A dead Campus grant (#98) answers 401 here: re-auth is the
             // only remedy, so redirect before any generic error UI.

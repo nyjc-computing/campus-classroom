@@ -1,7 +1,9 @@
 """Gateway entry: apphost sign-in allowlist (#169) and the pre-cutover
-forward to the PUBLIC_URL origin (#171).
+forward to the PUBLIC_URL origin (#171), plus the cutover-readiness
+contracts of #170/#157: root static mount, /health, and the inert
+canonical-host flag.
 
-Two contracts:
+Contracts:
 
   A. campus-apphost (EMBED_MODE=1) lets a publisher sign in on its own
      origin again. Since #165 the auth blueprint mounts at the root and
@@ -13,6 +15,16 @@ Two contracts:
      to the same resource on the PUBLIC_URL origin, where sign-in can
      complete. It stops once the two hosts agree, and origin traffic
      (no prefix header) is never redirected.
+  C. Static mounts at Flask's root: /static/... at the origin, single
+     /classroom/static/... behind the gateway (#170 item 3 — the #162
+     literal mount double-prefixed). /health answers a plain 200 on
+     both deployments, including behind the gateway and inside the
+     apphost containment (#157).
+  D. CANONICALIZE_ORIGIN_HOST (issue #170 item 5): inert when unset;
+     when set, a direct hit on a non-canonical host (no prefix header —
+     i.e. the old origin domain after the PUBLIC_URL flip) bounces to
+     its namespaced gateway shape, so distributed /a/<id> coursework
+     links keep working. Gateway-hosted traffic keeps the #173 forward.
 
 Run:  python tests/test_gateway_entry.py   (exit 1 on violation)
 """
@@ -131,6 +143,90 @@ for path in ("/finalize_login", "/logout"):
 for path in ("/dashboard", "/a/uid-assignment-x", "/assignments"):
     check(f"apphost containment still refuses {path}",
           client.get(path).status_code, 404)
+
+# --- C. root static mount + /health (#170 item 3, #157) ----------------------
+
+os.environ.pop("EMBED_MODE", None)
+client = create_app().test_client()
+
+r = client.get("/", headers={"Host": "origin.example"})
+html = r.get_data(as_text=True)
+check("origin page emits the root static URL",
+      'href="/static/css/style.css"' in html, True)
+check("… and degrades the URL globals to root shapes",
+      'window.CAMPUS_API_BASE = "/api/v1"' in html, True)
+
+r = via_gateway(client, "/classroom/", "/classroom", host="origin.example")
+html = r.get_data(as_text=True)
+check("gateway page emits the single-prefix static URL",
+      'href="/classroom/static/css/style.css"' in html, True)
+check("… with no double prefix",
+      "/classroom/classroom/static" not in html, True)
+check("… and namespaced URL globals",
+      'window.CAMPUS_API_BASE = "/classroom/api/v1"' in html, True)
+
+check("origin serves /static",
+      client.get("/static/css/style.css",
+                 headers={"Host": "origin.example"}).status_code, 200)
+check("gateway-emulated static resolves at the single prefix",
+      via_gateway(client, "/classroom/static/css/style.css", "/classroom",
+                  host="origin.example").status_code, 200)
+
+check("origin /health answers 200 ok",
+      client.get("/health", headers={"Host": "origin.example"}).data, b"ok")
+check("gateway-emulated /health answers 200",
+      via_gateway(client, "/classroom/health", "/classroom",
+                  host="origin.example").status_code, 200)
+
+os.environ["EMBED_MODE"] = "1"
+client = create_app().test_client()
+check("apphost: /health is exempt from the containment 404",
+      client.get("/health").status_code, 200)
+check("apphost: gateway-emulated /health answers 200",
+      via_gateway(client, "/apps/health", "/apps",
+                  host="origin.example").status_code, 200)
+check("apphost: origin serves /static",
+      client.get("/static/css/style.css").status_code, 200)
+
+# --- D. canonical-host flag (issue #170 item 5) ------------------------------
+# Post-flip simulation: PUBLIC_URL names the gateway host; the origin
+# domain keeps answering directly. Flag on: distributed /a/<id> links on
+# the origin domain bounce to their namespaced gateway shape.
+
+GATEWAY = "https://gateway.example"
+os.environ.pop("EMBED_MODE", None)
+os.environ["CANONICALIZE_ORIGIN_HOST"] = "1"
+os.environ["PUBLIC_URL"] = GATEWAY
+client = create_app().test_client()
+
+# Flag-off inertness was proven above: with CANONICALIZE_ORIGIN_HOST
+# unset, origin-hosted requests whose host differs from PUBLIC_URL
+# ("localhost" vs origin.example there) were never redirected.
+
+r = client.get("/a/uid-assignment-x", headers={"Host": "origin.example"})
+check("flag on: direct hit on the old origin redirects", r.status_code, 302)
+check("… to the namespaced gateway shape",
+      location(r), f"{GATEWAY}/classroom/a/uid-assignment-x")
+
+r = client.get("/a/uid-assignment-x?course=c1",
+               headers={"Host": "origin.example"})
+check("… with the query intact",
+      location(r), f"{GATEWAY}/classroom/a/uid-assignment-x?course=c1")
+
+r = client.get("/a/uid-assignment-x", headers={"Host": "gateway.example"})
+check("the canonical host itself is never redirected",
+      location(r).startswith("/"), True)
+
+r = via_gateway(client, "/classroom/dashboard", "/classroom",
+                host="origin.example")
+check("flag on: gateway-hosted requests keep the #173 forward",
+      location(r), f"{GATEWAY}/dashboard")
+
+os.environ["EMBED_MODE"] = "1"
+client = create_app().test_client()
+r = client.get("/apps/add", headers={"Host": "origin.example"})
+check("flag on: apphost origin hit adds the namespace once",
+      location(r), f"{GATEWAY}/apps/apps/add")
 
 # --- result -----------------------------------------------------------------
 

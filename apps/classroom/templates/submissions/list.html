@@ -47,7 +47,7 @@ const isReviewable = (a) => a.created_by === MY_ID
 async function loadSubmissions() {
     const container = document.getElementById('submissions-container');
     try {
-        const assignments = await fetchJson('/api/v1/assignments');
+        const assignments = await fetchJson(`${CAMPUS_API_BASE}/assignments`);
         const mine = assignments.filter(isReviewable);
 
         // One assignment failing (e.g. a deleted row) degrades to fewer
@@ -55,7 +55,7 @@ async function loadSubmissions() {
         const tagged = (await Promise.all(mine.map(async (assignment) => {
             try {
                 const submissions = await fetchJson(
-                    `/api/v1/submissions/by-assignment/${encodeURIComponent(assignment.id)}`);
+                    `${CAMPUS_API_BASE}/submissions/by-assignment/${encodeURIComponent(assignment.id)}`);
                 return submissions.map((s) => ({
                     ...s,
                     assignment_id: assignment.id,
@@ -135,14 +135,14 @@ async function fetchJson(url) {
 }
 
 function submissionRowHtml(submission) {
-    const reviewUrl = `/submissions/${encodeURIComponent(submission.id)}`;
+    const reviewUrl = `${CAMPUS_SCRIPT_ROOT}/submissions/${encodeURIComponent(submission.id)}`;
     const status = submission.submitted_at
         ? `Submitted at ${timestamp(submission.submitted_at)}`
         : 'Draft';
     return `
         <tr>
             <td>
-                <a href="/assignments/${encodeURIComponent(submission.assignment_id)}/submissions"
+                <a href="${CAMPUS_SCRIPT_ROOT}/assignments/${encodeURIComponent(submission.assignment_id)}/submissions"
                    class="text-decoration-none text-dark fw-semibold">${escapeHtml(submission.assignment_title)}</a>
             </td>
             <td class="text-break">${escapeHtml(submission.student_id)}</td>

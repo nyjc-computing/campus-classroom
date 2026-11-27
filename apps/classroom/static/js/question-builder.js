@@ -138,7 +138,12 @@ function loadAppsAndTrack() {
 
 function ensureAppsLoaded() {
     if (!APPS_PROMISE) {
-        APPS_PROMISE = fetch('/api/v1/apps', {
+        // window.CAMPUS_API_BASE: the base.html URL global (issue #170
+        // item 1) — namespaced behind campus-gateway, root-shaped at the
+        // origin. The root-shape fallback keeps the file usable on pages
+        // that predate the global.
+        const apiBase = window.CAMPUS_API_BASE || '/api/v1';
+        APPS_PROMISE = fetch(apiBase + '/apps', {
             headers: {'X-Requested-With': 'XMLHttpRequest'},
         })
             .then(response => {

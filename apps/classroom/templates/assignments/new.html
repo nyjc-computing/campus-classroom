@@ -71,7 +71,7 @@ async function submitAssignment(e) {
     };
 
     try {
-        const response = await fetch('/api/v1/assignments', {
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -87,7 +87,7 @@ async function submitAssignment(e) {
         }
 
         const data = await response.json();
-        window.location.href = `/assignments/${data.id}`;
+        window.location.href = `${CAMPUS_SCRIPT_ROOT}/assignments/${data.id}`;
     } catch (error) {
         console.error('Error creating assignment:', error);
         alert('Failed to create assignment. Please try again.');

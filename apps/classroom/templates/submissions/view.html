@@ -40,7 +40,7 @@ const assignment = {
 
 async function loadSubmission() {
     try {
-        const response = await fetch(`/api/v1/submissions/${submissionId}`);
+        const response = await fetch(`${CAMPUS_API_BASE}/submissions/${submissionId}`);
         if (!response.ok) {
             // A dead Campus grant (#98) answers 401 here: re-auth is the
             // only remedy, so redirect before any generic error UI.
@@ -260,7 +260,7 @@ function autoSave(questionId, value) {
     if (readOnly) return;  // read-only review (#104): students never save here
     clearTimeout(autoSaveTimeouts[questionId]);
     autoSaveTimeouts[questionId] = setTimeout(async () => {
-        await fetch(`/api/v1/submissions/${submissionId}/responses`, {
+        await fetch(`${CAMPUS_API_BASE}/submissions/${submissionId}/responses`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -276,7 +276,7 @@ function autoSave(questionId, value) {
 
 async function submitSubmission() {
     try {
-        const response = await fetch(`/api/v1/submissions/${submissionId}/submit`, {
+        const response = await fetch(`${CAMPUS_API_BASE}/submissions/${submissionId}/submit`, {
             method: 'POST',
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });

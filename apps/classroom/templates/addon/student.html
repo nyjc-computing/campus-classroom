@@ -18,6 +18,14 @@
     </div>
 
     <script>
+        // URL globals (issue #170 item 1) — the base.html block, inlined:
+        // this iframe page does not extend base.html. Classroom iframes
+        // run on the origin, where the values degrade to root shapes.
+        window.CAMPUS_API_BASE = {{ api_base | tojson }};
+        window.CAMPUS_LOGIN_URL = {{ login_url | tojson }};
+        window.CAMPUS_LOGOUT_URL = {{ logout_url | tojson }};
+        window.CAMPUS_SCRIPT_ROOT = {{ script_root | tojson }};
+
         // Context passed from backend
         const context = {{ context | tojson }};
         const userId = {{ user_id | tojson }};
@@ -43,7 +51,7 @@
 
             try {
                 // Get submissions for this user in this course
-                const response = await fetch(`/api/v1/submissions/for-student?course_id=${context.courseId}`);
+                const response = await fetch(`${CAMPUS_API_BASE}/submissions/for-student?course_id=${context.courseId}`);
                 if (!response.ok) throw new Error('Failed to load submission');
 
                 if (response.status === 404) {
@@ -83,7 +91,7 @@
                 }
 
                 // Load the assignment details
-                const assignmentResp = await fetch(`/api/v1/assignments/${submission.assignment_id}`);
+                const assignmentResp = await fetch(`${CAMPUS_API_BASE}/assignments/${submission.assignment_id}`);
                 if (!assignmentResp.ok) throw new Error('Failed to load assignment');
 
                 const assignment = await assignmentResp.json();

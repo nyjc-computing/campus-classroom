@@ -75,3 +75,5 @@ jobs:
         run: poetry run python tests/test_broker_release_isolation.py
       - name: Gateway entry (apphost sign-in allowlist, pre-cutover forward; #169 #171)
         run: poetry run python tests/test_gateway_entry.py
+      - name: No root-absolute URLs in rendered pages (gateway cutover, #170)
+        run: poetry run python tests/test_no_root_absolute_urls.py
