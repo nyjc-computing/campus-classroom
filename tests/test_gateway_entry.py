@@ -240,6 +240,17 @@ r = client.get("/health", headers={"Host": "origin.example"})
 check("flag on: apphost origin /health answers, never redirects",
       (r.status_code, r.data), (200, b"ok"))
 
+r = via_gateway(client, "/apps/add", "/apps", host="gateway.example")
+check("flag on: apphost single-prefix gateway hit bounces to the "
+      "double shape (typed URLs, stale links, login next=)",
+      location(r), "/apps/apps/add")
+r = via_gateway(client, "/apps/myapps?x=1", "/apps", host="gateway.example")
+check("… with the query intact",
+      location(r), "/apps/apps/myapps?x=1")
+check("… and is not a 404", r.status_code, 302)
+check("apphost origin: unknown paths bounce to the gateway (flag on)",
+      client.get("/add").status_code, 302)
+
 # --- result -----------------------------------------------------------------
 
 failed = [name for name, ok in checks if not ok]

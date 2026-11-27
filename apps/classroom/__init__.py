@@ -283,6 +283,22 @@ def create_app():
             or path in {"/login", "/finalize_login", "/logout", "/health"}
         )
         if not allowed:
+            gateway_prefix = flask.request.script_root
+            if gateway_prefix:
+                # Behind the gateway the app's literal /apps routes only
+                # resolve at the double shape (namespace + the /apps
+                # path): a single-prefix hit — a typed URL, a stale
+                # link, or the stripped path stored as the login next= —
+                # would 404 here. Bounce it to the resolvable shape
+                # (gateway namespace + this app's literal /apps prefix +
+                # the stripped path); unknown paths still end in 404,
+                # one hop later.
+                target = f"{gateway_prefix}/apps{path}"
+                if flask.request.query_string:
+                    target += (
+                        f"?{flask.request.query_string.decode(errors='replace')}"
+                    )
+                return flask.redirect(target)
             flask.abort(404)
 
     # Register UI routes
