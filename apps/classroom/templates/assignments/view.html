@@ -57,7 +57,7 @@
 <script>
 const assignmentId = {{ assignment_id | tojson }};
 const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
-const CAMPUS_LOGIN_URL = {{ url_for('auth.login') | tojson }};
+// CAMPUS_LOGIN_URL comes from the base.html URL globals (#170).
 // Per-question embed URLs for document questions (#78), minted
 // server-side like the student answer sheet; empty when the embed
 // origin is not configured (previews degrade to a notice).
@@ -81,7 +81,7 @@ function isLocked() {
 
 async function loadAssignment() {
     try {
-        const response = await fetch(`/api/v1/assignments/${assignmentId}`);
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments/${assignmentId}`);
         if (!response.ok) {
             // A dead Campus grant (#98) answers 401 here: re-auth is the
             // only remedy, so redirect before any generic error UI.
@@ -229,7 +229,7 @@ async function saveEdit(e) {
     if (!questions) return;
 
     try {
-        const response = await fetch(`/api/v1/assignments/${assignmentId}`, {
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments/${assignmentId}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
@@ -369,7 +369,7 @@ async function openClassroomPicker() {
 
 async function loadCourses() {
     try {
-        const response = await fetch('/api/v1/classroom/courses');
+        const response = await fetch(`${CAMPUS_API_BASE}/classroom/courses`);
         if (!response.ok) {
             showPickerError(await response.json().catch(() => ({})));
             return;
@@ -418,7 +418,7 @@ async function sendToClassroom() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…';
 
     try {
-        const response = await fetch(`/api/v1/assignments/${assignmentId}/classroom/send`, {
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments/${assignmentId}/classroom/send`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

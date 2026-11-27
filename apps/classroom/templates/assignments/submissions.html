@@ -44,7 +44,7 @@ let CLASSROOM_STATES = [];
 async function loadClassroomStates() {
     try {
         const response = await fetch(
-            `/api/v1/assignments/${encodeURIComponent(assignmentId)}/classroom-states`);
+            `${CAMPUS_API_BASE}/assignments/${encodeURIComponent(assignmentId)}/classroom-states`);
         if (!response.ok) return;
         const data = await response.json();
         if (data.degraded) {
@@ -73,7 +73,7 @@ async function loadSubmissions() {
     try {
         const [response] = await Promise.all([
             fetch(
-                `/api/v1/submissions/by-assignment/${encodeURIComponent(assignmentId)}`),
+                `${CAMPUS_API_BASE}/submissions/by-assignment/${encodeURIComponent(assignmentId)}`),
             loadClassroomStates(),
         ]);
         if (!response.ok) {
@@ -134,7 +134,7 @@ function submissionRowHtml(submission) {
     const gc = classroomStateFor(submission);
     const notMirrored = Boolean(submission.submitted_at)
         && (!gc || gc.state !== 'TURNED_IN');
-    const reviewUrl = `/submissions/${encodeURIComponent(submission.id)}`;
+    const reviewUrl = `${CAMPUS_SCRIPT_ROOT}/submissions/${encodeURIComponent(submission.id)}`;
     const status = submission.submitted_at
         ? `Submitted at ${timestamp(submission.submitted_at)}`
         : 'Draft';

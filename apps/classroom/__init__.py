@@ -22,16 +22,17 @@ load_dotenv()
 
 def create_app():
     """Application factory for Campus Classroom."""
-    # Static assets mount under the deployment's namespace (#156 gateway
-    # cutover): url_for('static') then emits /classroom/static/... or
-    # /apps/static/..., which campus-gateway routes (the host-root
-    # /static it would otherwise emit is unrouted behind the gateway).
-    static_url_path = "/apps/static" if documents.embed_mode() else "/classroom/static"
-    app = flask.Flask(
-        __name__,
-        static_folder="static",
-        static_url_path=static_url_path
-    )
+    # Static assets mount at Flask's default root: url_for('static') emits
+    # /static/... at the origin and, behind campus-gateway, PrefixFix
+    # (flask-campus 0.2.8, fc#50) namespaces it to /classroom/static/... or
+    # /apps/static/... — the shapes the gateway routes. The #162-era literal
+    # namespace mount double-prefixed behind the gateway (the literal rode
+    # the route path AND PrefixFix's SCRIPT_NAME), emitting
+    # /classroom/classroom/static/... (issue #170 item 3). No persisted
+    # asset URLs exist — pages are server-rendered per request — so the
+    # origin's static URLs moving from /classroom/static/... to /static/...
+    # is safe.
+    app = flask.Flask(__name__, static_folder="static")
 
     # Trace producer (campus#816 item 2, issue #37): record classroom
     # requests as audit spans, and let SDK calls made while handling a
@@ -74,21 +75,33 @@ def create_app():
     else:
         app.config["SESSION_COOKIE_NAME"] = "campus_classroom_session"
 
-    # Pre-cutover forward (#171). Behind campus-gateway the app answers on
-    # the gateway host, but until PUBLIC_URL names that host a sign-in
-    # can only complete on the PUBLIC_URL origin: the OAuth callback is
-    # built from PUBLIC_URL and the session cookie is set on that host,
-    # so a gateway-hosted page can neither hold a session nor finish a
-    # login (the origin does not serve the namespaced callback path).
-    # Until the two hosts agree, send gateway-mounted requests to the
-    # same resource on the PUBLIC_URL origin, where sign-in works. Once
-    # PUBLIC_URL names the gateway host this is a no-op, and origin
-    # traffic carries no X-Forwarded-Prefix, so it is never redirected.
-    # 302, never 301/308: the redirect must not outlive the cutover.
+    # Pre-cutover forward (#171), generalized for the canonical-host flip
+    # (issue #170 item 5). Two directions, one redirect:
+    #
+    #   gateway-hosted (X-Forwarded-Prefix -> SCRIPT_NAME): until
+    #   PUBLIC_URL names the gateway host a sign-in can only complete on
+    #   the PUBLIC_URL origin — the OAuth callback is built from
+    #   PUBLIC_URL and the session cookie is set on that host, so a
+    #   gateway-hosted page can neither hold a session nor finish a
+    #   login. Until the two hosts agree, send these to the same resource
+    #   on the PUBLIC_URL origin, where sign-in works. Once PUBLIC_URL
+    #   names the gateway host the hosts compare equal and this is a
+    #   no-op. This arm runs unconditionally (#173 behavior).
+    #
+    #   direct origin hit (no prefix header), CANONICALIZE_ORIGIN_HOST=1:
+    #   after the flip, coursework links already distributed on the
+    #   origin domain (/a/<id>) would dead-end there — the origin can no
+    #   longer establish a session. Bounce them to their namespaced
+    #   gateway shape (PUBLIC_URL + /classroom|/apps + path) so the link
+    #   keeps working. Inert until the flag is set; when it is off the
+    #   origin behaves exactly as #173 left it.
+    # 302, never 301/308: neither redirect may outlive the cutover.
+    canonicalize_origin_host = env.get_flag("CANONICALIZE_ORIGIN_HOST", False)
+
     @app.before_request
     def _forward_gateway_host_to_origin():
         prefix = flask.request.script_root  # PrefixFix, from X-Forwarded-Prefix
-        if not prefix:
+        if not prefix and not canonicalize_origin_host:
             return None
         try:
             origin = url.canonical_origin()
@@ -96,12 +109,21 @@ def create_app():
             return None
         if urlsplit(origin).netloc.lower() == flask.request.host.lower():
             return None
-        # The apphost serves its routes under a literal /apps prefix on
-        # its own origin (published embed URLs are absolute), so only the
-        # classroom deployment drops the namespace.
-        path = flask.request.path
-        if documents.embed_mode():
-            path = prefix + path
+        if prefix:
+            # The apphost serves its routes under a literal /apps prefix on
+            # its own origin (published embed URLs are absolute), so only the
+            # classroom deployment drops the namespace.
+            path = flask.request.path
+            if documents.embed_mode():
+                path = prefix + path
+        else:
+            # Direct origin hit with the canonical host elsewhere: rebuild
+            # the gateway-namespaced path. The apphost's origin paths
+            # already carry /apps (see above), and behind the gateway its
+            # namespaced shape is /apps + the /apps-prefixed route — the
+            # namespace is added once, on top of the origin path.
+            namespace = "/apps" if documents.embed_mode() else "/classroom"
+            path = namespace + flask.request.path
         target = f"{origin}{path}"
         if flask.request.query_string:
             target += f"?{flask.request.query_string.decode(errors='replace')}"
@@ -174,8 +196,24 @@ def create_app():
     # Embed deployments render the same templates but only serve the
     # /apps/ surface, so base.html swaps the Classroom navbar (whose
     # routes are gated 404 there) for the apphost one.
+    #
+    # The URL globals (issue #170 item 1) let every page compose its API
+    # and page URLs from server-computed bases instead of hardcoded
+    # root-absolute literals that bypass url_for. Behind campus-gateway,
+    # PrefixFix moves X-Forwarded-Prefix into SCRIPT_NAME, so
+    # request.script_root names the namespace and url_for emits
+    # namespaced URLs; at the origin script_root is empty and every value
+    # degrades to the root shape (/api/v1, /login, ...). Rendered once in
+    # base.html (and the standalone addon iframes) as window.CAMPUS_*
+    # constants.
     app.context_processor(
-        lambda: {"embed_mode": documents.embed_mode()}
+        lambda: {
+            "embed_mode": documents.embed_mode(),
+            "api_base": flask.request.script_root + "/api/v1",
+            "login_url": flask.url_for("auth.login"),
+            "logout_url": flask.url_for("auth.logout"),
+            "script_root": flask.request.script_root,
+        }
     )
 
     # Setup OAuth login manager. login_prefix mounts the auth blueprint
@@ -237,7 +275,7 @@ def create_app():
         # publisher sign-in (#169).
         allowed = (
             path.startswith(("/apps/", "/api/v1/apps", "/static/"))
-            or path in {"/login", "/finalize_login", "/logout"}
+            or path in {"/login", "/finalize_login", "/logout", "/health"}
         )
         if not allowed:
             flask.abort(404)
@@ -246,6 +284,15 @@ def create_app():
     @app.get("/")
     def index():
         return flask.render_template("index.html")
+
+    # Liveness probe (issue #157): a plain 200 the cutover's health
+    # checks can poll on both deployments, without auth or Campus
+    # round-trips. Deliberately before the apphost containment's eyes:
+    # the exact path is allowlisted there too (gateway path probes hit
+    # the namespace-stripped route on either deployment).
+    @app.get("/health")
+    def health():
+        return flask.Response("ok", mimetype="text/plain")
 
     @app.get("/sign-in")
     def sign_in():

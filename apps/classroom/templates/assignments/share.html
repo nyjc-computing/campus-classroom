@@ -362,7 +362,7 @@ async function exportDocumentAnswers() {
 
 async function mintExportNonce(qid) {
     const response = await fetch(
-        `/api/v1/assignments/${encodeURIComponent(SHARE.assignmentId)}/export-challenge`, {
+        `${CAMPUS_API_BASE}/assignments/${encodeURIComponent(SHARE.assignmentId)}/export-challenge`, {
             method: 'POST',
             headers: jsonHeaders(),
             body: JSON.stringify({ question_id: qid }),
@@ -433,7 +433,7 @@ function render() {
 async function loadSubmission() {
     try {
         const response = await fetch(
-            `/api/v1/submissions/for-student?assignment_id=${encodeURIComponent(SHARE.assignmentId)}`);
+            `${CAMPUS_API_BASE}/submissions/for-student?assignment_id=${encodeURIComponent(SHARE.assignmentId)}`);
         if (response.ok) {
             // null body = the normal pre-submission state (#1247); an
             // older backend answered 404 for it — also treat as none.
@@ -461,7 +461,7 @@ async function pushResponses() {
     responses.push(...await exportDocumentAnswers());
 
     if (submission) {
-        const response = await fetch(`/api/v1/submissions/${submission.id}`, {
+        const response = await fetch(`${CAMPUS_API_BASE}/submissions/${submission.id}`, {
             method: 'PATCH',
             headers: jsonHeaders(),
             body: JSON.stringify({ responses }),
@@ -475,7 +475,7 @@ async function pushResponses() {
         if (!courseId) {
             throw new Error('Pick the class you are answering for first.');
         }
-        const response = await fetch('/api/v1/submissions', {
+        const response = await fetch(`${CAMPUS_API_BASE}/submissions`, {
             method: 'POST',
             headers: jsonHeaders(),
             body: JSON.stringify({
@@ -518,7 +518,7 @@ async function submitAssignment() {
     try {
         await pushResponses();  // creates the submission if needed
         const response = await fetch(
-            `/api/v1/submissions/${submission.id}/submit`, {
+            `${CAMPUS_API_BASE}/submissions/${submission.id}/submit`, {
                 method: 'POST',
                 headers: jsonHeaders(),
             });
@@ -545,7 +545,7 @@ async function unsubmit() {
     setBusy(true);
     try {
         const response = await fetch(
-            `/api/v1/submissions/${submission.id}/unsubmit`, {
+            `${CAMPUS_API_BASE}/submissions/${submission.id}/unsubmit`, {
                 method: 'POST',
                 headers: jsonHeaders(),
             });

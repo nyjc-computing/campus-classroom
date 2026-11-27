@@ -98,7 +98,7 @@ async function publishApp() {
     const btn = document.getElementById('publish-btn');
     btn.disabled = true;
     try {
-        const response = await fetch('/api/v1/apps', {
+        const response = await fetch(`${CAMPUS_API_BASE}/apps`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

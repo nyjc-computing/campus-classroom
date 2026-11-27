@@ -175,7 +175,7 @@ async function saveChanges() {
     const btn = document.getElementById('save-btn');
     btn.disabled = true;
     try {
-        const response = await fetch('/api/v1/apps/' + encodeURIComponent(ORIGINAL_SLUG), {
+        const response = await fetch(CAMPUS_API_BASE + '/apps/' + encodeURIComponent(ORIGINAL_SLUG), {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',

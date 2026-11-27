@@ -23,16 +23,19 @@ function formatApiError(data, fallback) {
 // campus_session_expired because the stored grant behind the app
 // session is gone or unrefreshable — no retry can succeed until the
 // browser re-enters the Campus OAuth flow. Redirects the top-level
-// page through /login, which returns to the current URL (query
-// included) after sign-in. Returns true when it took over, so callers
-// can skip their usual error UI.
+// page through the login route (window.CAMPUS_LOGIN_URL, the base.html
+// URL global — issue #170 item 1: behind campus-gateway that is the
+// namespaced /classroom/login, not a root-absolute literal), which
+// returns to the current URL (query included) after sign-in. Returns
+// true when it took over, so callers can skip their usual error UI.
 function handleSessionExpiry(response, data) {
     const code = (data && data.error && data.error.code)
         || (data && data.code) || '';
     if (response.status !== 401 && code !== 'campus_session_expired') {
         return false;
     }
+    const loginUrl = window.CAMPUS_LOGIN_URL || '/login';
     const next = encodeURIComponent(location.pathname + location.search);
-    window.location.assign('/login?next=' + next);
+    window.location.assign(loginUrl + '?next=' + next);
     return true;
 }

@@ -18,6 +18,14 @@
     </div>
 
     <script>
+        // URL globals (issue #170 item 1) — the base.html block, inlined:
+        // this iframe page does not extend base.html. Classroom iframes
+        // run on the origin, where the values degrade to root shapes.
+        window.CAMPUS_API_BASE = {{ api_base | tojson }};
+        window.CAMPUS_LOGIN_URL = {{ login_url | tojson }};
+        window.CAMPUS_LOGOUT_URL = {{ logout_url | tojson }};
+        window.CAMPUS_SCRIPT_ROOT = {{ script_root | tojson }};
+
         // Context passed from backend
         const context = {{ context | tojson }};
         const userId = {{ user_id | tojson }};
@@ -59,7 +67,7 @@
                     </div>
 
                     <div class="mb-3">
-                        <a href="/assignments/new" target="_blank" class="btn btn-primary">
+                        <a href="{{ url_for('assignment_new') }}" target="_blank" class="btn btn-primary">
                             + Create New Assignment
                         </a>
                     </div>
@@ -80,7 +88,7 @@
 
         async function loadAssignments() {
             try {
-                const response = await fetch(`/api/v1/assignments?created_by=${userId}`);
+                const response = await fetch(`${CAMPUS_API_BASE}/assignments?created_by=${userId}`);
                 if (!response.ok) throw new Error('Failed to load assignments');
 
                 const assignments = await response.json();
@@ -109,7 +117,7 @@
             }
 
             try {
-                const response = await fetch(`/api/v1/assignments/${assignmentId}`);
+                const response = await fetch(`${CAMPUS_API_BASE}/assignments/${assignmentId}`);
                 if (!response.ok) throw new Error('Failed to load assignment');
 
                 const assignment = await response.json();
@@ -141,7 +149,7 @@
             }
 
             try {
-                const response = await fetch(`/api/v1/assignments/${assignmentId}/links`, {
+                const response = await fetch(`${CAMPUS_API_BASE}/assignments/${assignmentId}/links`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

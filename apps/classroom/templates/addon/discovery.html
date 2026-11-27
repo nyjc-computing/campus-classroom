@@ -37,11 +37,11 @@
 
         <div class="text-center">
             {% if g.user %}
-            <a href="/dashboard" target="_blank" rel="noopener" class="btn btn-primary">
+            <a href="{{ url_for('dashboard') }}" target="_blank" rel="noopener" class="btn btn-primary">
                 Open Campus Classroom
             </a>
             {% else %}
-            <a href="/sign-in" target="_blank" rel="noopener" class="btn btn-primary">
+            <a href="{{ url_for('sign_in') }}" target="_blank" rel="noopener" class="btn btn-primary">
                 Sign in to Campus Classroom
             </a>
             {% endif %}

@@ -17,6 +17,7 @@ this test keeps that fix (and the general rule) enforced:
 Run:  python tests/test_template_invariants.py   (exit 1 on violation)
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -25,6 +26,21 @@ import flask
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLASSROOM_DIR = REPO_ROOT / "apps" / "classroom"
+
+# Same dummy environment as the CI smoke job: rendering goes through the
+# REAL app factory since #170 — base.html renders the URL globals
+# (api_base/login_url/...) with url_for, which a bare mini-app cannot
+# resolve. No network happens before the assertions.
+for key, value in {
+    "SECRET_KEY": "test",
+    "CLIENT_ID": "ci-dummy",
+    "CLIENT_SECRET": "ci-dummy",
+    "BASE_URL": "https://campus.test",
+    "PUBLIC_URL": "http://localhost:5000",
+}.items():
+    os.environ.setdefault(key, value)
+
+sys.path.insert(0, str(REPO_ROOT))
 
 # Forms whose submit is handled by page JS (not native action), per template.
 # Adding a JS-handled form here without novalidate fails Rule 1.
@@ -48,23 +64,13 @@ def check(name, ok, detail=""):
 
 
 def make_app():
-    app = flask.Flask(
-        "template_invariants",
-        template_folder=str(CLASSROOM_DIR / "templates"),
-        static_folder=str(CLASSROOM_DIR / "static"),
-    )
-    for endpoint, path in [
-        ("assignments_list", "/assignments"),
-        ("submissions_list", "/submissions"),
-        ("apps_add", "/apps/add"),
-        ("apps_myapps", "/apps/myapps"),
-    ]:
-        app.add_url_rule(path, endpoint, lambda: "")
-    return app
+    from apps.classroom import create_app
+
+    return create_app()
 
 
 def render(app, template):
-    with app.test_request_context():
+    with app.test_request_context("/invariants-probe"):
         flask.g.user = None
         return flask.render_template(template, **TEMPLATE_CONTEXT.get(template, {}))
 
