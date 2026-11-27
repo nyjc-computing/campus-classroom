@@ -100,6 +100,11 @@ def create_app():
 
     @app.before_request
     def _forward_gateway_host_to_origin():
+        if flask.request.path == "/health":
+            # Liveness probes hit the serving origin directly; bouncing
+            # them to the gateway would turn a probe into a redirect the
+            # prober may not follow (#157).
+            return None
         prefix = flask.request.script_root  # PrefixFix, from X-Forwarded-Prefix
         if not prefix and not canonicalize_origin_host:
             return None
