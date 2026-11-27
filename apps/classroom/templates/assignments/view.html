@@ -57,6 +57,7 @@
 <script>
 const assignmentId = {{ assignment_id | tojson }};
 const PROFILE_INTEGRATIONS_URL = {{ profile_integrations_url | tojson }};
+const CAMPUS_LOGIN_URL = {{ url_for('auth.login') | tojson }};
 // Per-question embed URLs for document questions (#78), minted
 // server-side like the student answer sheet; empty when the embed
 // origin is not configured (previews degrade to a notice).
@@ -326,7 +327,7 @@ function showPickerError(err) {
         // The Campus grant behind the app session died (#98); the only
         // remedy is re-entering the Campus OAuth flow, which returns here.
         html = `${escapeHtml(e.message)}
-            <a href="/login?next=${encodeURIComponent(location.pathname + location.search)}"
+            <a href="${CAMPUS_LOGIN_URL}?next=${encodeURIComponent(location.pathname + location.search)}"
                class="btn btn-sm btn-primary mt-2">Sign in to Campus</a>`;
     } else if (e.code === 'classroom_not_connected' || e.code === 'classroom_missing_scopes') {
         // Google Classroom tokens are held by campus.auth (issue #30);

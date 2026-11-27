@@ -22,7 +22,7 @@
             </a>
         </div>
         {% else %}
-        <a class="btn btn-primary btn-lg" href="/login?next=%2Fapps%2Fadd">
+        <a class="btn btn-primary btn-lg" href="{{ url_for('auth.login', next='/apps/add') }}">
             <i class="bi bi-box-arrow-in-right me-2"></i>Sign in to add an app
         </a>
         {% endif %}
