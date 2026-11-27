@@ -4,11 +4,13 @@ Campus Classroom Application: assignment platform with Google Classroom integrat
 """
 
 import os
+from urllib.parse import urlsplit
 
 import campus_python
 import flask
 from campus import flask_campus
 from campus.common import env
+from campus.common.utils import url
 from dotenv import load_dotenv
 
 from . import campus_session, documents, enrollment, routes
@@ -71,6 +73,39 @@ def create_app():
         app.config["SESSION_COOKIE_NAME"] = "campus_apphost_session"
     else:
         app.config["SESSION_COOKIE_NAME"] = "campus_classroom_session"
+
+    # Pre-cutover forward (#171). Behind campus-gateway the app answers on
+    # the gateway host, but until PUBLIC_URL names that host a sign-in
+    # can only complete on the PUBLIC_URL origin: the OAuth callback is
+    # built from PUBLIC_URL and the session cookie is set on that host,
+    # so a gateway-hosted page can neither hold a session nor finish a
+    # login (the origin does not serve the namespaced callback path).
+    # Until the two hosts agree, send gateway-mounted requests to the
+    # same resource on the PUBLIC_URL origin, where sign-in works. Once
+    # PUBLIC_URL names the gateway host this is a no-op, and origin
+    # traffic carries no X-Forwarded-Prefix, so it is never redirected.
+    # 302, never 301/308: the redirect must not outlive the cutover.
+    @app.before_request
+    def _forward_gateway_host_to_origin():
+        prefix = flask.request.script_root  # PrefixFix, from X-Forwarded-Prefix
+        if not prefix:
+            return None
+        try:
+            origin = url.canonical_origin()
+        except (OSError, ValueError):
+            return None
+        if urlsplit(origin).netloc.lower() == flask.request.host.lower():
+            return None
+        # The apphost serves its routes under a literal /apps prefix on
+        # its own origin (published embed URLs are absolute), so only the
+        # classroom deployment drops the namespace.
+        path = flask.request.path
+        if documents.embed_mode():
+            path = prefix + path
+        target = f"{origin}{path}"
+        if flask.request.query_string:
+            target += f"?{flask.request.query_string.decode(errors='replace')}"
+        return flask.redirect(target)
 
     # In-iframe session policy (issue #12): Classroom embeds /addon/* as
     # third-party iframes, where SameSite=Lax cookies are never sent —
@@ -194,9 +229,15 @@ def create_app():
         path = flask.request.path
         if path in {"/", "/apps"}:
             return flask.redirect(flask.url_for("apps_landing"))
+        # request.path is the namespace-stripped path both on the origin
+        # and behind campus-gateway (PrefixFix moves X-Forwarded-Prefix
+        # into SCRIPT_NAME), and the auth blueprint mounts at the root
+        # since #165, so the auth trio is named by its root shapes. The
+        # #161-era /apps/login names matched no route and dead-ended
+        # publisher sign-in (#169).
         allowed = (
             path.startswith(("/apps/", "/api/v1/apps", "/static/"))
-            or path in {"/apps/login", "/apps/finalize_login", "/apps/logout"}
+            or path in {"/login", "/finalize_login", "/logout"}
         )
         if not allowed:
             flask.abort(404)
