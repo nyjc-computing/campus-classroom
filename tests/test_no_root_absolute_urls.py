@@ -42,7 +42,10 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-# Same dummy environment as the CI smoke job. EMBED_ORIGIN stays unset so
+# Same dummy environment as the CI smoke job; PUBLIC_URL is FORCED (not
+# setdefault — the smoke job exports its own) so the request-host
+# comparisons below are exact: origin.example is the canonical host and
+# the #173 forward never steals a request. EMBED_ORIGIN stays unset so
 # assignment_view skips its per-question embed reads; EMBED_MODE starts
 # unset (the classroom deployment).
 for key, value in {
@@ -50,9 +53,10 @@ for key, value in {
     "CLIENT_ID": "ci-dummy",
     "CLIENT_SECRET": "ci-dummy",
     "BASE_URL": "https://campus.test",
-    "PUBLIC_URL": "https://origin.example",
 }.items():
     os.environ.setdefault(key, value)
+ORIGIN = "https://origin.example"
+os.environ["PUBLIC_URL"] = ORIGIN
 os.environ.pop("EMBED_MODE", None)
 os.environ.pop("EMBED_ORIGIN", None)
 
@@ -62,8 +66,6 @@ import flask  # noqa: E402
 from apps.classroom import campus_session, create_app, enrollment  # noqa: E402
 
 logging.getLogger("apps.classroom").setLevel(logging.CRITICAL)
-
-ORIGIN = "https://origin.example"
 
 checks = []
 
