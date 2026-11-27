@@ -31,6 +31,21 @@ def upstream_error_response(e: APIError):
     return flask.jsonify({"error": error}), getattr(e, "status_code", 502)
 
 
+def _link_state(err: cauth.ClassroomAuthError) -> str:
+    """Map a bridge failure to the listing's X-Classroom-Link-State value
+    (#180): the dashboard must tell "not connected" (and "needs a
+    reconnect") apart from a genuinely empty class instead of showing a
+    bare "No assignments yet" for both.
+    """
+    if isinstance(err, cauth.NotConnectedError):
+        return "not-connected"
+    if isinstance(err, cauth.MissingClassroomScopesError):
+        return "reconnect-needed"
+    if isinstance(err, cauth.CampusSessionExpiredError):
+        return "reauth-needed"
+    return "unavailable"
+
+
 def register_routes(app: flask.Flask, login_manager):
     """Register assignment routes with the Flask app.
 
@@ -55,13 +70,19 @@ def register_routes(app: flask.Flask, login_manager):
         auth-bridge failure (no connection, missing scopes, Classroom
         down): this is a discovery listing, and every content read or
         attempt still passes the rule-2/3 enrollment gates, so the
-        degradation cannot leak anything — it only ever hides.
+        degradation cannot leak anything — it only ever hides. The WHY
+        is not swallowed silently, though (#180): the response carries
+        the bridge state in X-Classroom-Link-State so the dashboard can
+        tell "not connected" (actionable) apart from a genuinely empty
+        class — see _link_state().
         """
         user_id = flask.g.user.id
 
         try:
             my_courses = enrollment.user_courses()
+            link_state = "ok"
         except cauth.ClassroomAuthError as err:
+            link_state = _link_state(err)
             flask.current_app.logger.warning(
                 "Assignment listing degraded to own-only for %s: %s (%s)",
                 user_id, err.code, err.message,
@@ -78,7 +99,9 @@ def register_routes(app: flask.Flask, login_manager):
         ]
         visible.sort(key=lambda a: str(getattr(a, "created_at", "")), reverse=True)
 
-        return flask.jsonify([a.to_resource() for a in visible])
+        response = flask.jsonify([a.to_resource() for a in visible])
+        response.headers["X-Classroom-Link-State"] = link_state
+        return response
 
     @app.get("/api/v1/assignments/<assignment_id>/classroom-states")
     @login_manager.login_required

@@ -21,7 +21,7 @@ from .. import classroom_auth as cauth
 def register_routes(app: flask.Flask, login_manager):
     """Register Classroom auth bridge routes with the Flask app."""
 
-    bp = flask.Blueprint("classroom_auth", __name__, url_prefix="/classroom")
+    bp = flask.Blueprint("classroom_auth", __name__, url_prefix="/connect")
 
     def _profile_integrations_url() -> str:
         return f"{cauth.profile_integrations_url()}/profile/integrations"
@@ -92,7 +92,7 @@ def register_routes(app: flask.Flask, login_manager):
         flask.flash(err.message, "danger")
         return flask.redirect(flask.url_for("classroom_auth.connection"))
 
-    @bp.get("/")
+    @bp.get("")
     @login_manager.login_required
     def connection(**_):
         """Connection status page + courses.list() acceptance demo.

@@ -27,6 +27,7 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script src="{{ url_for('static', filename='js/link-state.js') }}"></script>
 <script>
 // Page context: the signed-in user decides which card actions a row gets
 // (own assignments are managed here; assigned ones open on the gated
@@ -47,29 +48,29 @@ async function loadAssignments() {
         }
 
         const data = await response.json();
+        // #180: the header names the bridge state, so an empty listing can
+        // say "not connected" instead of a bare "no assignments yet".
+        const linkState = response.headers.get('X-Classroom-Link-State') || 'ok';
         const container = document.getElementById('assignments-container');
 
         if (data.length === 0) {
             container.innerHTML = `
                 <div class="col-12">
-                    <div class="text-center py-5">
-                        <h5 class="text-muted">No assignments yet</h5>
-                        <p class="text-muted">
-                            Assignments you create — or that a teacher assigns to
-                            your Google Classroom classes — will appear here.
-                        </p>
-                        <a href="{{ url_for('assignment_new') }}" class="btn btn-primary">Create Assignment</a>
-                    </div>
+                    ${classroomEmptyStateHtml(linkState)}
                 </div>
             `;
             return;
+        }
+        if (linkState !== 'ok') {
+            container.insertAdjacentHTML('afterbegin',
+                `<div class="col-12">${classroomDegradedBannerHtml(linkState)}</div>`);
         }
 
         container.innerHTML = data.map(assignment => {
             const mine = assignment.created_by === MY_ID;
             // Own assignments are managed in the app; assigned ones open
             // on the gated share page.
-            const target = `/${mine ? 'assignments' : 'a'}/${encodeURIComponent(assignment.id)}`;
+            const target = `${CAMPUS_SCRIPT_ROOT}/${mine ? 'assignments' : 'a'}/${encodeURIComponent(assignment.id)}`;
             return `
             <div class="col-md-6 col-lg-4 mb-3">
                 <div class="card h-100">
