@@ -71,3 +71,5 @@ jobs:
           EOF
       - name: Template invariants (novalidate on JS-handled forms, #128)
         run: poetry run python tests/test_template_invariants.py
+      - name: Broker release isolation (nested session mints as the client, #168)
+        run: poetry run python tests/test_broker_release_isolation.py

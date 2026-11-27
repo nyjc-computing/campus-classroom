@@ -329,6 +329,37 @@ def _broker_error(err: CampusClientError) -> ClassroomAuthError:
     )
 
 
+# campus-api-python >= 0.11.1 (#189) keeps the active session bearer in a
+# ContextVar rather than on the instance, so the throwaway Campus in
+# _broker_release inherits whatever session the *context* holds. Private
+# SDK name, import-guarded so a rename cannot take the app down at
+# import; tests/test_broker_release_isolation.py fails loudly if a
+# release changes this without fixing the entry mint.
+try:
+    from campus_python.json_client import (
+        _bearer_override as _sdk_bearer_override,
+    )
+except ImportError:  # pragma: no cover
+    _sdk_bearer_override = None
+
+
+@contextmanager
+def _context_bearer_suspended() -> Iterator[None]:
+    """Run the block with the SDK's context-local bearer cleared (#168).
+
+    Restored on exit, so the caller's own session continues untouched
+    afterwards. No-op when the SDK no longer exposes the override.
+    """
+    if _sdk_bearer_override is None:
+        yield
+        return
+    token = _sdk_bearer_override.set(None)
+    try:
+        yield
+    finally:
+        _sdk_bearer_override.reset(token)
+
+
 def _broker_release(min_scopes: list[str]) -> dict:
     """Release the user's google.classroom token via the client library.
 
@@ -347,22 +378,26 @@ def _broker_release(min_scopes: list[str]) -> dict:
       pins SDK >= 0.7.1, so nesting is safe again).
     - Structural (why the throwaway STAYS even with #159 fixed): the
       token mint at with_user_session() ENTRY runs before the SDK
-      touches authorization, so on a shared instance already carrying
-      an outer session's bearer the mint request would present that
-      user bearer — and the login-session token route denies user
-      principals outright (campus#963/A10; verified live 2026-11-10:
-      bearer-only mint -> 403 FORBIDDEN). A fresh instance holds no
-      bearer, so its mint authenticates as the client (Basic), which
-      is what A10 requires.
+      touches authorization, so a request already carrying a session's
+      bearer has that bearer presented by the mint — and the
+      login-session token route denies user principals outright
+      (campus#963/A10; verified live 2026-11-10: bearer-only mint ->
+      403 FORBIDDEN). The mint must authenticate as the client (Basic),
+      which is what A10 requires.
 
-    Do NOT swap this for flask.current_app.campus unless the SDK gains
-    per-request principal scoping (a nested release inside any route
-    holding a user session would otherwise 403 its mint away).
+      Since campus-api-python 0.11.1 (#189) the bearer is CONTEXT-local,
+      not instance-local, so a fresh instance no longer helps: created
+      inside a route's campus_session.user_session() block — where the
+      save, submit and export routes run their enrollment gate — it
+      inherits the outer user's bearer and the mint 403s (#168; prod
+      2026-11-27). The SDK suspends the override only inside its 401
+      refresh hook, not at entry (campus-api-python#193), so
+      _context_bearer_suspended() clears it around the nested session.
     """
     campus = campus_python.Campus(timeout=60)
 
     def _release_once() -> dict:
-        with campus.with_user_session() as client:
+        with _context_bearer_suspended(), campus.with_user_session() as client:
             return client.auth.broker.token(
                 "google", "classroom", min_scopes=min_scopes or None,
             )
