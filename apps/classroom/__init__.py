@@ -144,14 +144,17 @@ def create_app():
     )
 
     # Setup OAuth login manager. login_prefix mounts the auth blueprint
-    # under the deployment's namespace (flask-campus#47): /classroom/login
-    # vs /apps/login are dispatchable behind campus-gateway, where the
-    # root-level /login is shared by four consumer apps and unroutable
-    # (gateway umbrella campus#1295; opt-in tracked as classroom#156).
+    # The blueprint mounts at root: behind campus-gateway, flask_campus
+    # PrefixFix (0.2.8, fc#50) moves the gateway's X-Forwarded-Prefix
+    # (/classroom or /apps per deployment) into SCRIPT_NAME, so the same
+    # routes serve /classroom/login or /apps/login there — and /login on
+    # the origin, where the root-level /login of the fc#47 era was shared
+    # by four consumer apps and unroutable (gateway umbrella campus#1295;
+    # opt-in tracked as classroom#156). fc#50 supersedes login_prefix for
+    # gateway deployments (do-not-combine).
     login_manager = flask_campus.OAuthLoginManager(
         campus_client=campus,
         default_endpoint="index",
-        login_prefix="/apps" if documents.embed_mode() else "/classroom",
     )
     login_manager.init_app(app)
 
