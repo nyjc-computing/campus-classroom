@@ -7,16 +7,18 @@ there. campus.auth's login-session token route accepts the client's Basic
 credentials only (campus#963/A10): a mint presented with a user bearer is
 403 FORBIDDEN, which the routes answer with 502.
 
-The contract:
+The contract (enforced against the pinned SDK; the app carries no shim
+since 0.11.3 — campus-api-python#193 fixed the entry mint and the
+temporary #172 suspension shim was dropped):
 
   1. The nested session's entry mint authenticates as the client
      (Basic), never with the outer session's bearer.
   2. The broker release itself carries the nested session's bearer.
   3. The outer session's bearer is intact once the release returns.
-  4. Tripwire: without the suspension the mint inherits the outer
-     bearer on the pinned SDK. If this check starts failing, the SDK
-     fixed its entry mint (campus-api-python#193) — drop the shim
-     (_context_bearer_suspended) in apps/classroom/classroom_auth.py.
+
+If this test starts failing, an SDK change reintroduced a
+bearer-carried entry mint — fix the SDK (or re-shim as #172 did), do
+not special-case the routes.
 
 Run:  python tests/test_broker_release_isolation.py   (exit 1 on violation)
 """
@@ -109,7 +111,7 @@ def release_inside_user_session():
     return creds
 
 
-# --- with the suspension ----------------------------------------------------
+# --- the contract, against the pinned SDK (no app-side shim) -----------------
 
 calls.clear()
 creds = release_inside_user_session()
@@ -126,24 +128,11 @@ def is_client(auth):
 
 
 check("outer entry mint authenticates as the client", mints[0], is_client)
-check("nested entry mint authenticates as the client", mints[1], is_client)
+check("nested entry mint authenticates as the client (SDK >= 0.11.3, #193)",
+      mints[1], is_client)
 check("broker release carries the nested session's bearer",
       broker[0], lambda a: a.startswith("Bearer ") and a != "Bearer user1")
 check("outer session's bearer intact after the release", after[0], "Bearer user1")
-
-# --- tripwire: the SDK defect the suspension exists for ---------------------
-
-saved, classroom_auth._sdk_bearer_override = classroom_auth._sdk_bearer_override, None
-try:
-    calls.clear()
-    release_inside_user_session()
-finally:
-    classroom_auth._sdk_bearer_override = saved
-unsuspended = [auth for path, auth in calls if path == "/logins/s1/token"]
-
-check("tripwire: without the suspension the nested mint presents the outer "
-      "bearer (if this fails, the SDK fixed its entry mint — drop the shim)",
-      unsuspended[1], "Bearer user1")
 
 # --- restore ----------------------------------------------------------------
 
