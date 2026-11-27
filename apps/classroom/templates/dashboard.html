@@ -25,6 +25,7 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/api-errors.js') }}"></script>
+<script src="{{ url_for('static', filename='js/link-state.js') }}"></script>
 <script>
 // Page context: the signed-in user's id decides which rows are theirs —
 // own assignments get submission counts and the submissions drill-down;
@@ -42,23 +43,25 @@ async function loadAssignments() {
     const container = document.getElementById('assignments-container');
     try {
         // Rule 4 (#14): the API computes own + assigned-to-my-courses,
-        // newest first.
-        const assignments = await fetchJson(`${CAMPUS_API_BASE}/assignments`);
+        // newest first. The response header names the bridge state
+        // (#180) so an empty listing can say "not connected" instead of
+        // a bare "no assignments yet".
+        const response = await fetch(`${CAMPUS_API_BASE}/assignments`);
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            if (handleSessionExpiry(response, data)) return;
+            throw new Error('Failed to load assignments');
+        }
+        const assignments = await response.json();
+        const linkState = response.headers.get('X-Classroom-Link-State') || 'ok';
 
         if (assignments.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-5">
-                    <h5 class="text-muted">No assignments yet</h5>
-                    <p class="text-muted">
-                        Assignments you create — or that a teacher assigns to
-                        your Google Classroom classes — will appear here.
-                    </p>
-                    <a href="{{ url_for('assignment_new') }}" class="btn btn-primary">Create Assignment</a>
-                </div>
-            `;
+            container.innerHTML = classroomEmptyStateHtml(linkState);
             return;
         }
-
+        if (linkState !== 'ok') {
+            container.insertAdjacentHTML('afterbegin', classroomDegradedBannerHtml(linkState));
+        }
         // Course names and the per-assignment enrichment (N+1, see
         // above) run in parallel; both degrade on failure — names fall
         // back to course ids, counts to "—".

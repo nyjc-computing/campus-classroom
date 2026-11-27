@@ -324,6 +324,16 @@ def create_app():
     def dashboard(**_):
         return flask.render_template("dashboard.html")
 
+    # The connection page's pre-cutover address: the app's own /classroom
+    # route under the /classroom gateway namespace read as the awkward
+    # /classroom/classroom/ double shape (#180), and origin-era bookmarks
+    # still carry campus-classroom.up.railway.app/classroom. Both shapes
+    # redirect to the canonical /connect (gateway: /classroom/connect).
+    @app.get("/classroom")
+    @app.get("/classroom/")
+    def classroom_connection_alias():
+        return flask.redirect(flask.url_for("classroom_auth.connection"))
+
     # Assignment UI routes
     @app.get("/assignments")
     @login_manager.login_required
