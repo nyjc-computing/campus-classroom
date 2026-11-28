@@ -36,6 +36,11 @@ const MY_ID = {{ g.user.id | tojson }};
 
 // Load assignments on page load
 async function loadAssignments() {
+    // Declared before the try: the catch below renders the failure
+    // alert into it (#187 — declared inside the try, a fetch failure
+    // reached the catch with container undefined and died on a
+    // ReferenceError, leaving the loading spinner up forever).
+    const container = document.getElementById('assignments-container');
     try {
         // Rule 4 (#14): the API computes own + assigned-to-my-courses.
         const response = await fetch(`${CAMPUS_API_BASE}/assignments`);
@@ -51,7 +56,6 @@ async function loadAssignments() {
         // #180: the header names the bridge state, so an empty listing can
         // say "not connected" instead of a bare "no assignments yet".
         const linkState = response.headers.get('X-Classroom-Link-State') || 'ok';
-        const container = document.getElementById('assignments-container');
 
         if (data.length === 0) {
             container.innerHTML = `
