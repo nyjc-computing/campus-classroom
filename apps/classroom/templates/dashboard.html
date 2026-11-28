@@ -43,17 +43,18 @@ async function loadAssignments() {
     const container = document.getElementById('assignments-container');
     try {
         // Rule 4 (#14): the API computes own + assigned-to-my-courses,
-        // newest first. The response header names the bridge state
-        // (#180) so an empty listing can say "not connected" instead of
-        // a bare "no assignments yet".
+        // newest first. The envelope names the bridge state (#180,
+        // in-body per #184) so an empty listing can say "not connected"
+        // instead of a bare "no assignments yet".
         const response = await fetch(`${CAMPUS_API_BASE}/assignments`);
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
             if (handleSessionExpiry(response, data)) return;
             throw new Error('Failed to load assignments');
         }
-        const assignments = await response.json();
-        const linkState = response.headers.get('X-Classroom-Link-State') || 'ok';
+        const payload = await response.json();
+        const assignments = payload.assignments;
+        const linkState = payload.link_state || 'ok';
 
         if (assignments.length === 0) {
             container.innerHTML = classroomEmptyStateHtml(linkState);

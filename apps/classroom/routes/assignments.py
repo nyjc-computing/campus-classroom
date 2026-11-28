@@ -32,10 +32,10 @@ def upstream_error_response(e: APIError):
 
 
 def _link_state(err: cauth.ClassroomAuthError) -> str:
-    """Map a bridge failure to the listing's X-Classroom-Link-State value
-    (#180): the dashboard must tell "not connected" (and "needs a
-    reconnect") apart from a genuinely empty class instead of showing a
-    bare "No assignments yet" for both.
+    """Map a bridge failure to the listing's link_state value (#180,
+    enveloped in the body per #184): the dashboard must tell "not
+    connected" (and "needs a reconnect") apart from a genuinely empty
+    class instead of showing a bare "No assignments yet" for both.
     """
     if isinstance(err, cauth.NotConnectedError):
         return "not-connected"
@@ -71,8 +71,10 @@ def register_routes(app: flask.Flask, login_manager):
         down): this is a discovery listing, and every content read or
         attempt still passes the rule-2/3 enrollment gates, so the
         degradation cannot leak anything — it only ever hides. The WHY
-        is not swallowed silently, though (#180): the response carries
-        the bridge state in X-Classroom-Link-State so the dashboard can
+        is not swallowed silently, though (#180): the body is an
+        envelope carrying the bridge state next to the items —
+        {"assignments": [...], "link_state": <state>} (#184; the state
+        stopped riding in a response header) — so the dashboard can
         tell "not connected" (actionable) apart from a genuinely empty
         class — see _link_state().
         """
@@ -99,9 +101,14 @@ def register_routes(app: flask.Flask, login_manager):
         ]
         visible.sort(key=lambda a: str(getattr(a, "created_at", "")), reverse=True)
 
-        response = flask.jsonify([a.to_resource() for a in visible])
-        response.headers["X-Classroom-Link-State"] = link_state
-        return response
+        # Body envelope, not a header (#184): the state rides with the
+        # items — discoverable in any JSON viewer, travels with cached
+        # representations, and matches the in-body "degraded" convention
+        # the classroom-states route (#105) already uses.
+        return flask.jsonify({
+            "assignments": [a.to_resource() for a in visible],
+            "link_state": link_state,
+        })
 
     @app.get("/api/v1/assignments/<assignment_id>/classroom-states")
     @login_manager.login_required

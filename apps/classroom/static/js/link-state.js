@@ -1,12 +1,12 @@
 // #180: state panels for the assignments listing.
 //
-// The listing API names the bridge state in the X-Classroom-Link-State
-// response header ("ok" | "not-connected" | "reconnect-needed" |
-// "reauth-needed" | "unavailable"); these helpers render the matching
-// empty state or degraded banner, so an unconnected student never sees a
-// bare "No assignments yet". CAMPUS_SCRIPT_ROOT (base.html) keeps every
-// link namespace-aware behind campus-gateway; CAMPUS_LOGIN_URL carries
-// the re-auth target.
+// The listing API names the bridge state in its body envelope's
+// link_state field ("ok" | "not-connected" | "reconnect-needed" |
+// "reauth-needed" | "unavailable" — #184); these helpers render the
+// matching empty state or degraded banner, so an unconnected student
+// never sees a bare "No assignments yet". CAMPUS_SCRIPT_ROOT
+// (base.html) keeps every link namespace-aware behind campus-gateway;
+// CAMPUS_LOGIN_URL carries the re-auth target.
 
 function classroomConnectUrl() {
     return `${window.CAMPUS_SCRIPT_ROOT || ''}/connect`;

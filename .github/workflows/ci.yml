@@ -77,3 +77,5 @@ jobs:
         run: poetry run python tests/test_gateway_entry.py
       - name: No root-absolute URLs in rendered pages (gateway cutover, #170)
         run: poetry run python tests/test_no_root_absolute_urls.py
+      - name: Listing link_state envelope + /connect rename (#180 #184 #186)
+        run: poetry run python tests/test_listing_link_state.py
