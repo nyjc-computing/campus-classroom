@@ -77,3 +77,7 @@ jobs:
         run: poetry run python tests/test_gateway_entry.py
       - name: No root-absolute URLs in rendered pages (gateway cutover, #170)
         run: poetry run python tests/test_no_root_absolute_urls.py
+      - name: Markdown filter (prompt/passage/description rendering, #186)
+        run: poetry run python tests/test_markdown_filter.py
+      # test_listing_link_state.py joins here too — its step lands with the
+      # file itself on the #184 envelope PR (#186 tracks the CI gap).
