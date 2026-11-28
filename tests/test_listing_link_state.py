@@ -1,17 +1,26 @@
-"""The listing's link-state header + the /connect route rename (#180).
+"""The listing's link_state envelope + the /connect route rename (#180/#184).
 
-Two contracts:
+Three contracts:
 
-  A. GET /api/v1/assignments names the bridge state in
-     X-Classroom-Link-State so the dashboard can tell "not connected"
-     (actionable — connect/reconnect) apart from a genuinely empty class
-     (#180): mapping via _link_state(), exercised directly on the error
-     types (constructing the full listing path needs the whole campus +
-     Classroom fake stack; the mapping is the part that must not drift).
+  A. GET /api/v1/assignments names the bridge state so the dashboard can
+     tell "not connected" (actionable — connect/reconnect) apart from a
+     genuinely empty class (#180): mapping via _link_state(), exercised
+     directly on the error types (constructing the full listing path
+     needs the whole campus + Classroom fake stack; the mapping is the
+     part that must not drift). The state travels IN THE BODY —
+     {"assignments": [...], "link_state": ...} (#184 supersedes the
+     #181 response header; one mechanism, discoverable in any JSON
+     viewer, matching the in-body "degraded" convention).
   B. The connection page moved from the app's /classroom route (which
      read as the awkward /classroom/classroom/ double shape behind the
      gateway) to /connect; the old origin path redirects, and the
      double-prefixed gateway shape resolves bounded — no loop.
+  C. The portal entry (#180 follow-up, user directive 2026-11-28):
+     campus.nyjc.app/classroom lands a signed-in visitor on their work
+     and keeps the marketing page for anonymous visitors.
+  D. Static pin (#184): the header is gone — the route builds the
+     envelope, every consumer reads the body fields, and no
+     X-Classroom-Link-State reference remains anywhere under apps/.
 
 Run:  python tests/test_listing_link_state.py   (exit 1 on violation)
 """
@@ -111,6 +120,41 @@ with app.test_request_context("/", base_url="https://gateway.example"):
     rendered = app.view_functions["index"]()
     check("anonymous portal entry keeps the marketing page",
           isinstance(rendered, str) and "Sign In" in rendered, True)
+
+# --- D. the #184 envelope, pinned statically ----------------------------------
+
+route_src = (REPO_ROOT / "apps" / "classroom" / "routes"
+             / "assignments.py").read_text(encoding="utf-8")
+apps_tree = (REPO_ROOT / "apps" / "classroom")
+header_refs = [
+    str(p.relative_to(REPO_ROOT))
+    for p in apps_tree.rglob("*")
+    if p.is_file() and "__pycache__" not in p.parts
+    and "X-Classroom-Link-State" in p.read_text(encoding="utf-8",
+                                                errors="ignore")
+]
+check("no X-Classroom-Link-State reference remains under apps/",
+      header_refs, [])
+check("route wraps the listing in the envelope body",
+      '"assignments": [a.to_resource() for a in visible]' in route_src
+      and '"link_state": link_state' in route_src, True)
+check("route no longer writes a response header",
+      'response.headers' not in route_src, True)
+
+dashboard_src = (apps_tree / "templates" / "dashboard.html").read_text(
+    encoding="utf-8")
+list_src = (apps_tree / "templates" / "assignments" / "list.html").read_text(
+    encoding="utf-8")
+teacher_src = (apps_tree / "templates" / "addon" / "teacher.html").read_text(
+    encoding="utf-8")
+for name, src in (("dashboard", dashboard_src), ("list", list_src),
+                  ("teacher picker", teacher_src)):
+    check(f"{name} reads the items from payload.assignments",
+          "payload.assignments" in src or ").assignments" in src, True)
+check("dashboard reads the state from the body",
+      "payload.link_state" in dashboard_src, True)
+check("list reads the state from the body",
+      "payload.link_state" in list_src, True)
 
 # --- result -----------------------------------------------------------------
 

@@ -47,13 +47,15 @@ async function loadAssignments() {
             throw new Error('Failed to load assignments');
         }
 
-        const data = await response.json();
-        // #180: the header names the bridge state, so an empty listing can
-        // say "not connected" instead of a bare "no assignments yet".
-        const linkState = response.headers.get('X-Classroom-Link-State') || 'ok';
+        const payload = await response.json();
+        const assignments = payload.assignments;
+        // #180: the envelope names the bridge state (in-body per #184),
+        // so an empty listing can say "not connected" instead of a bare
+        // "no assignments yet".
+        const linkState = payload.link_state || 'ok';
         const container = document.getElementById('assignments-container');
 
-        if (data.length === 0) {
+        if (assignments.length === 0) {
             container.innerHTML = `
                 <div class="col-12">
                     ${classroomEmptyStateHtml(linkState)}
@@ -66,7 +68,7 @@ async function loadAssignments() {
                 `<div class="col-12">${classroomDegradedBannerHtml(linkState)}</div>`);
         }
 
-        container.innerHTML = data.map(assignment => {
+        container.innerHTML = assignments.map(assignment => {
             const mine = assignment.created_by === MY_ID;
             // Own assignments are managed in the app; assigned ones open
             // on the gated share page.

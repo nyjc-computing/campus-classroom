@@ -91,7 +91,9 @@
                 const response = await fetch(`${CAMPUS_API_BASE}/assignments?created_by=${userId}`);
                 if (!response.ok) throw new Error('Failed to load assignments');
 
-                const assignments = await response.json();
+                // Body envelope (#184): the items ride in .assignments —
+                // the picker ignores the link_state next to them.
+                const assignments = (await response.json()).assignments;
                 const select = document.getElementById('assignment-select');
 
                 assignments.forEach(a => {
